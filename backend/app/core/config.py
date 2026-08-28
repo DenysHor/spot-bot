@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     max_portfolio_allocation_pct: float = 50.0
     max_position_pct: float = 10.0
     reserve_usdt_pct: float = 20.0
+    grid_poll_seconds: float = 5.0
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
