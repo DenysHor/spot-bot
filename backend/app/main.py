@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException
@@ -5,11 +6,11 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.exchange.binance_public import BinancePublicClient
+from app.grid.execution import GridExecutionEngine
 from app.paper.broker import PaperBroker
 from app.paper.portfolio import PaperPortfolio
 from app.strategies.smart_grid import SmartGrid
 
-app = FastAPI(title="Spot Bot API", version="0.2.0")
 market = BinancePublicClient()
 portfolio = PaperPortfolio(
     starting_quote=settings.paper_start_balance,
@@ -17,6 +18,29 @@ portfolio = PaperPortfolio(
 )
 broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
+
+
+async def current_price(symbol: str) -> float:
+    data = await market.price(symbol.upper())
+    return float(data["price"])
+
+
+grid_engine = GridExecutionEngine(
+    broker=broker,
+    price_provider=current_price,
+    poll_seconds=getattr(settings, "grid_poll_seconds", 5.0),
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.trading_mode == "PAPER":
+        grid_engine.start_background()
+    yield
+    await grid_engine.stop_background()
+
+
+app = FastAPI(title="Spot Bot API", version="0.3.0", lifespan=lifespan)
 
 
 class PaperBuyRequest(BaseModel):
@@ -36,26 +60,29 @@ class GridPlanRequest(BaseModel):
     levels_each_side: int = Field(default=4, ge=1, le=50)
 
 
+class GridStartRequest(GridPlanRequest):
+    pass
+
+
 def base_asset_from_symbol(symbol: str) -> str:
     symbol = symbol.upper()
     quote = settings.quote_asset.upper()
     if not symbol.endswith(quote):
-        raise ValueError(f"Only {quote}-quoted symbols are supported in paper v0.2")
-    return symbol[: -len(quote)]
-
-
-async def current_price(symbol: str) -> float:
-    data = await market.price(symbol.upper())
-    return float(data["price"])
+        raise ValueError(f"Only {quote}-quoted symbols are supported")
+    base = symbol[: -len(quote)]
+    if not base:
+        raise ValueError("Invalid symbol")
+    return base
 
 
 @app.get("/health")
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
+        "grid_background_worker": settings.trading_mode == "PAPER",
     }
 
 
@@ -97,7 +124,8 @@ async def paper_trades() -> dict:
 @app.post("/api/paper/reset")
 async def paper_reset() -> dict:
     portfolio.reset()
-    return {"status": "reset", "portfolio": portfolio.snapshot()}
+    grid_engine.reset()
+    return {"status": "reset", "portfolio": portfolio.snapshot(), "grid_bots": []}
 
 
 @app.post("/api/paper/buy")
@@ -149,3 +177,59 @@ async def grid_plan(request: GridPlanRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid plan failed: {exc}") from exc
+
+
+@app.get("/api/grid/bots")
+async def grid_bots() -> dict:
+    return {"bots": grid_engine.list_bots()}
+
+
+@app.get("/api/grid/bots/{bot_id}")
+async def grid_bot(bot_id: str) -> dict:
+    try:
+        return grid_engine.get_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/start")
+async def grid_start(request: GridStartRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Grid execution v0.3 is PAPER-only")
+    try:
+        symbol = request.symbol.upper()
+        base_asset = base_asset_from_symbol(symbol)
+        price = await current_price(symbol)
+        bot = grid_engine.start_bot(
+            symbol=symbol,
+            base_asset=base_asset,
+            reference_price=price,
+            budget_quote=request.budget_quote,
+            step_pct=request.step_pct,
+            levels_each_side=request.levels_each_side,
+        )
+        return bot.snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Grid start failed: {exc}") from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/stop")
+async def grid_stop(bot_id: str) -> dict:
+    try:
+        return grid_engine.stop_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/tick")
+async def grid_tick(bot_id: str) -> dict:
+    """Manual one-shot tick for debugging; background polling runs automatically."""
+    try:
+        bot = await grid_engine.tick_bot(bot_id)
+        return bot.snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Grid tick failed: {exc}") from exc
