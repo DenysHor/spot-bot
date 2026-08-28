@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.2.0**. Only PAPER execution is implemented. TESTNET/LIVE are planned and intentionally not enabled yet.
+> Current development version: **0.3.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -18,10 +18,17 @@ Binance Spot trading manager with three execution modes:
 - Realized and unrealized P&L
 - Trade journal
 - Portfolio reset
-- First deterministic Smart Grid planner
+- Smart Grid planner
+- Automatic Paper Grid execution worker
+- Initial BUY levels below the market
+- Paired SELL creation after every filled BUY
+- Replacement BUY creation after a completed SELL
+- Per-grid realized cycle P&L and completed-cycle count
+- Configurable market polling interval (`GRID_POLL_SECONDS`, default 5 sec)
+- One running grid bot per symbol in v0.3 to prevent position conflicts
 - Basic risk manager foundation
 - API via FastAPI / Swagger
-- Unit tests for paper trading and grid planning
+- Unit tests for paper trading, grid planning and grid execution cycles
 
 ## Run locally
 
@@ -52,6 +59,23 @@ Open Swagger:
 http://127.0.0.1:8000/docs
 ```
 
+## Grid workflow
+
+Start a bot:
+
+`POST /api/grid/bots/start`
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "budget_quote": 1000,
+  "step_pct": 1.5,
+  "levels_each_side": 4
+}
+```
+
+The server then polls the real Binance price in the background. If price crosses a BUY trigger, the PaperBroker records a simulated BUY and creates a paired SELL one grid step above the fill. When that SELL is crossed, the bot records the cycle P&L and creates a replacement BUY one step below the sell fill.
+
 ## Useful endpoints
 
 ```text
@@ -63,27 +87,14 @@ POST /api/paper/buy
 POST /api/paper/sell
 POST /api/paper/reset
 POST /api/grid/plan
+GET  /api/grid/bots
+GET  /api/grid/bots/{bot_id}
+POST /api/grid/bots/start
+POST /api/grid/bots/{bot_id}/stop
+POST /api/grid/bots/{bot_id}/tick
 ```
 
-Example Paper BUY body:
-
-```json
-{
-  "symbol": "BTCUSDT",
-  "quote_amount": 100
-}
-```
-
-Example Smart Grid plan:
-
-```json
-{
-  "symbol": "BTCUSDT",
-  "budget_quote": 1000,
-  "step_pct": 1.5,
-  "levels_each_side": 4
-}
-```
+The `/tick` endpoint is only for debugging. Normal active grid bots are checked automatically by the background worker.
 
 ## Tests
 
@@ -95,13 +106,13 @@ pytest -q
 
 ## Next milestone
 
-1. Persist portfolio/trades in SQLite
-2. Grid execution engine that reacts to live prices
-3. RiskManager enforcement on every simulated BUY
-4. Backtesting with historical candles and fees
-5. Web dashboard
-6. Smart DCA
-7. Testnet execution
+1. SQLite persistence so bots survive server restarts
+2. Enforce RiskManager on every automatic BUY
+3. Historical candle backtesting with fees
+4. Web dashboard with bot cards, chart, levels and P&L
+5. Smart DCA
+6. Telegram notifications
+7. Binance Spot Testnet execution
 8. Live execution only after validation
 
 ## Safety
