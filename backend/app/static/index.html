@@ -96,6 +96,15 @@
       </div>
     </section>
 
+    <section class="panel analytics-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">PERFORMANCE</p><h2>Grid-аналітика</h2></div>
+        <div class="period-switch"><button class="ghost active" data-days="7" type="button">7 днів</button><button class="ghost" data-days="30" type="button">30 днів</button></div>
+      </div>
+      <div id="analytics-metrics" class="analytics-metrics"><p class="empty">Завантаження аналітики…</p></div>
+      <div class="analytics-chart-wrap"><canvas id="analytics-chart"></canvas><div id="analytics-empty" class="hidden">Ще немає завершених циклів за період.</div></div>
+    </section>
+
     <section class="panel backtest-panel">
       <div class="panel-head"><div><p class="eyebrow">HISTORICAL TEST</p><h2>Backtest стратегії</h2></div></div>
       <form id="backtest-form" class="backtest-form">

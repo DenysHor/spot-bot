@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.backtest.grid import GridBacktester
+from app.analytics.performance import grid_performance
 from app.core.config import settings
 from app.core.auth import SessionAuth, validate_cloud_security
 from app.dca.execution import DcaExecutionEngine
@@ -98,7 +99,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.13.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.14.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -211,7 +212,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.13.0",
+        "version": "0.14.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -568,6 +569,21 @@ async def notification_status() -> dict:
         "last_error": notifier.status.last_error,
         "deliveries": store.list_notifications(limit=20),
     }
+
+
+@app.get("/api/analytics/performance")
+async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
+    if days not in {7, 30}:
+        raise HTTPException(status_code=400, detail="days must be 7 or 30")
+    result = grid_performance(portfolio.trades, grid_engine.bots, days, symbol)
+    try:
+        candles = await current_klines(symbol, interval="1d", limit=days + 1)
+        first = float(candles[0][1])
+        last = float(candles[-1][4])
+        result["buy_hold_return_pct"] = (last - first) / first * 100 if first else 0.0
+    except Exception:
+        result["buy_hold_return_pct"] = None
+    return result
 
 
 @app.post("/api/notifications/test")
