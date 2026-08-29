@@ -28,7 +28,8 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY
                 );
-                INSERT OR IGNORE INTO schema_version(version) VALUES (1);
+                INSERT INTO schema_version(version)
+                SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
 
                 CREATE TABLE IF NOT EXISTS paper_portfolio (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -96,6 +97,38 @@ class SQLiteStore:
                     message TEXT NOT NULL,
                     UNIQUE(bot_id, sequence)
                 );
+
+                CREATE TABLE IF NOT EXISTS dca_bots (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    base_asset TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    budget_quote REAL NOT NULL,
+                    order_quote REAL NOT NULL,
+                    interval_seconds INTEGER NOT NULL,
+                    dip_trigger_pct REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    next_buy_at TEXT NOT NULL,
+                    last_price REAL NOT NULL,
+                    last_buy_price REAL NOT NULL,
+                    spent_quote REAL NOT NULL,
+                    buy_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS dca_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id TEXT NOT NULL REFERENCES dca_bots(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    quote_amount REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    message TEXT NOT NULL,
+                    UNIQUE(bot_id, sequence)
+                );
+                DELETE FROM schema_version
+                WHERE version < (SELECT MAX(version) FROM schema_version);
+                UPDATE schema_version SET version = 2 WHERE version < 2;
             """)
 
     def load_portfolio(self, portfolio: "PaperPortfolio") -> bool:
@@ -184,3 +217,39 @@ class SQLiteStore:
     def clear_bots(self) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM grid_bots")
+
+    def load_dca_bots(self):
+        from app.dca.execution import DcaBotState, DcaEvent
+
+        bots = {}
+        with self.connect() as db:
+            for row in db.execute("SELECT * FROM dca_bots ORDER BY created_at"):
+                bot = DcaBotState(**dict(row))
+                bot.events = [DcaEvent(**{k: v for k, v in dict(event).items()
+                                        if k not in {"id", "bot_id", "sequence"}})
+                              for event in db.execute(
+                                  "SELECT * FROM dca_events WHERE bot_id = ? ORDER BY sequence", (bot.id,)
+                              )]
+                bots[bot.id] = bot
+        return bots
+
+    def save_dca_bot(self, bot) -> None:
+        with self.connect() as db:
+            db.execute("""INSERT OR REPLACE INTO dca_bots VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                bot.id, bot.symbol, bot.base_asset, bot.status, bot.budget_quote,
+                bot.order_quote, bot.interval_seconds, bot.dip_trigger_pct, bot.created_at,
+                bot.next_buy_at, bot.last_price, bot.last_buy_price, bot.spent_quote, bot.buy_count,
+            ))
+            db.execute("DELETE FROM dca_events WHERE bot_id = ?", (bot.id,))
+            db.executemany("""INSERT INTO dca_events
+                (bot_id, sequence, timestamp, event, price, quote_amount, quantity, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", [
+                (bot.id, sequence, event.timestamp, event.event, event.price,
+                 event.quote_amount, event.quantity, event.message)
+                for sequence, event in enumerate(bot.events)
+            ])
+
+    def clear_dca_bots(self) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM dca_bots")

@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.6.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.7.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -34,6 +34,9 @@ Binance Spot trading manager with three execution modes:
 - Responsive web dashboard with portfolio metrics, PAPER bot controls and bot cards
 - Binance candlestick chart with active BUY/SELL grid-level overlays
 - Browser-based historical backtest form and performance summary
+- Smart DCA with scheduled purchases and extra dip-triggered purchases
+- RiskManager enforcement and SQLite recovery for every DCA bot and event
+- Smart DCA controls, budget usage and purchase statistics in the dashboard
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -75,6 +78,31 @@ http://127.0.0.1:8000/
 The dashboard is served directly by FastAPI and requires no separate frontend
 build. It refreshes portfolio and bot state automatically, while all trading
 actions remain PAPER-only.
+
+## Smart DCA
+
+Smart DCA makes a fixed PAPER purchase on the configured interval. After the
+first fill, it can also buy early when price falls by `dip_trigger_pct` from the
+last DCA fill. Every order is checked against the remaining bot budget and the
+same portfolio allocation, position and quote-reserve risk limits used by Grid.
+
+Example: a 1,000 USDT bot buying 100 USDT daily with a 5% dip trigger can be
+created from the dashboard or `POST /api/dca/bots/start`:
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "budget_quote": 1000,
+  "order_quote": 100,
+  "interval_minutes": 1440,
+  "dip_trigger_pct": 5
+}
+```
+
+The first scheduled BUY becomes due immediately. DCA is PAPER-only, persists
+across restarts, stops automatically when the remaining budget cannot cover a
+full order plus fee, and records `BUY_FILLED`, `BUY_BLOCKED`, `BUDGET_COMPLETED`
+and engine lifecycle events.
 
 ## Grid workflow
 
@@ -142,6 +170,11 @@ POST /api/paper/sell
 POST /api/paper/reset
 POST /api/grid/plan
 POST /api/backtest/grid
+GET  /api/dca/bots
+GET  /api/dca/bots/{bot_id}
+POST /api/dca/bots/start
+POST /api/dca/bots/{bot_id}/stop
+POST /api/dca/bots/{bot_id}/tick
 GET  /api/grid/bots
 GET  /api/grid/bots/{bot_id}
 POST /api/grid/bots/start
@@ -161,7 +194,7 @@ pytest -q
 
 ## Next milestone
 
-1. Smart DCA
+1. Automated Grid parameter comparison
 2. Telegram notifications
 3. Binance Spot Testnet execution
 4. Live execution only after validation

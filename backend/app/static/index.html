@@ -56,6 +56,20 @@
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>
     </section>
 
+    <section class="panel dca-panel">
+      <div class="panel-head"><div><p class="eyebrow">SMART ACCUMULATION</p><h2>Smart DCA</h2></div></div>
+      <div class="dca-layout">
+        <form id="dca-form" class="dca-form">
+          <label>Загальний бюджет, USDT<input id="dca-budget" type="number" value="1000" min="10" required></label>
+          <label>Одна покупка, USDT<input id="dca-order" type="number" value="100" min="1" required></label>
+          <label>Інтервал, хвилин<input id="dca-interval" type="number" value="1440" min="1" required></label>
+          <label>Докупити при падінні, %<input id="dca-dip" type="number" value="5" min="0.1" max="50" step="0.1" required></label>
+          <button type="submit">Запустити PAPER DCA</button>
+        </form>
+        <div id="dca-bots" class="bot-list dca-list"><p class="empty">DCA-ботів ще немає.</p></div>
+      </div>
+    </section>
+
     <section class="panel backtest-panel">
       <div class="panel-head"><div><p class="eyebrow">HISTORICAL TEST</p><h2>Backtest стратегії</h2></div></div>
       <form id="backtest-form" class="backtest-form">

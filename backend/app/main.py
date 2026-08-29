@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.backtest.grid import GridBacktester
 from app.core.config import settings
+from app.dca.execution import DcaExecutionEngine
 from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
 from app.paper.broker import PaperBroker
@@ -27,6 +28,11 @@ portfolio = PaperPortfolio(
 broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
 backtester = GridBacktester(fee_rate=0.001)
+risk_manager = RiskManager(RiskLimits(
+    max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
+    max_position_pct=settings.max_position_pct,
+    reserve_quote_pct=settings.reserve_usdt_pct,
+))
 
 
 async def current_price(symbol: str) -> float:
@@ -39,11 +45,11 @@ grid_engine = GridExecutionEngine(
     price_provider=current_price,
     poll_seconds=getattr(settings, "grid_poll_seconds", 5.0),
     store=store,
-    risk_manager=RiskManager(RiskLimits(
-        max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
-        max_position_pct=settings.max_position_pct,
-        reserve_quote_pct=settings.reserve_usdt_pct,
-    )),
+    risk_manager=risk_manager,
+)
+dca_engine = DcaExecutionEngine(
+    broker=broker, price_provider=current_price, risk_manager=risk_manager,
+    poll_seconds=settings.grid_poll_seconds, store=store,
 )
 
 
@@ -51,11 +57,13 @@ grid_engine = GridExecutionEngine(
 async def lifespan(app: FastAPI):
     if settings.trading_mode == "PAPER":
         grid_engine.start_background()
+        dca_engine.start_background()
     yield
     await grid_engine.stop_background()
+    await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.7.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -86,6 +94,14 @@ class GridBacktestRequest(GridPlanRequest):
     limit: int = Field(default=500, ge=2, le=1000)
 
 
+class DcaStartRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    budget_quote: float = Field(default=1000.0, gt=0)
+    order_quote: float = Field(default=100.0, gt=0)
+    interval_minutes: int = Field(default=1440, ge=1, le=525600)
+    dip_trigger_pct: float = Field(default=5.0, gt=0, le=50)
+
+
 @app.get("/", include_in_schema=False)
 async def dashboard() -> FileResponse:
     return FileResponse(static_dir / "index.html")
@@ -106,7 +122,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -172,7 +188,8 @@ async def paper_trades() -> dict:
 async def paper_reset() -> dict:
     portfolio.reset()
     grid_engine.reset()
-    return {"status": "reset", "portfolio": portfolio.snapshot(), "grid_bots": []}
+    dca_engine.reset()
+    return {"status": "reset", "portfolio": portfolio.snapshot(), "grid_bots": [], "dca_bots": []}
 
 
 @app.post("/api/paper/buy")
@@ -245,6 +262,57 @@ async def grid_backtest(request: GridBacktestRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid backtest failed: {exc}") from exc
+
+
+@app.get("/api/dca/bots")
+async def dca_bots() -> dict:
+    return {"bots": dca_engine.list_bots()}
+
+
+@app.get("/api/dca/bots/{bot_id}")
+async def dca_bot(bot_id: str) -> dict:
+    try:
+        return dca_engine.get_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/dca/bots/start")
+async def dca_start(request: DcaStartRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="DCA execution v0.7 is PAPER-only")
+    try:
+        symbol = request.symbol.upper()
+        base_asset = base_asset_from_symbol(symbol)
+        price = await current_price(symbol)
+        return dca_engine.start_bot(
+            symbol=symbol, base_asset=base_asset, reference_price=price,
+            budget_quote=request.budget_quote, order_quote=request.order_quote,
+            interval_seconds=request.interval_minutes * 60,
+            dip_trigger_pct=request.dip_trigger_pct,
+        ).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"DCA start failed: {exc}") from exc
+
+
+@app.post("/api/dca/bots/{bot_id}/stop")
+async def dca_stop(bot_id: str) -> dict:
+    try:
+        return dca_engine.stop_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/dca/bots/{bot_id}/tick")
+async def dca_tick(bot_id: str) -> dict:
+    try:
+        return (await dca_engine.tick_bot(bot_id)).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"DCA tick failed: {exc}") from exc
 
 
 @app.get("/api/grid/bots")

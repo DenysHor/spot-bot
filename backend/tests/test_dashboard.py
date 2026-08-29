@@ -14,6 +14,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "Spot Grid Lab" in page.text
     assert script.status_code == 200
     assert "/api/backtest/grid" in script.text
+    assert "/api/dca/bots/start" in script.text
+    assert "Smart DCA" in page.text
     assert styles.status_code == 200
     assert "--green" in styles.text
 

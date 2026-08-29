@@ -168,12 +168,12 @@ class GridExecutionEngine:
         portfolio = self.broker.portfolio
         position = portfolio.position(bot.base_asset)
         prices = {bot.base_asset: current_price}
-        equity = portfolio.snapshot(prices)["total_equity"]
-        total_grid_allocation = sum(x.spent_quote for x in self.bots.values())
+        snapshot = portfolio.snapshot(prices)
+        equity = snapshot["total_equity"]
         return self.risk_manager.check_buy(
             total_equity=equity,
             free_quote=portfolio.quote_balance,
-            current_bot_allocation=total_grid_allocation,
+            current_bot_allocation=snapshot["assets_value"],
             current_position_value=position.quantity * current_price,
             requested_quote=requested_quote * (1 + self.broker.fee_rate),
         )
