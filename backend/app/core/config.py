@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     reserve_usdt_pct: float = 20.0
     grid_poll_seconds: float = 5.0
     sqlite_path: str = "data/spot_bot.db"
+    sqlite_backup_count: int = 5
+
+    dashboard_username: str = "admin"
+    dashboard_password: str = ""
+    session_secret: str = ""
+    secure_cookies: bool = False
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000

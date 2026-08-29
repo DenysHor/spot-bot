@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.10.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.11.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -45,6 +45,9 @@ Binance Spot trading manager with three execution modes:
 - Pause/resume controls and automatic safety pause after three consecutive engine errors
 - CSV exports for PAPER trades and Grid/DCA events
 - Protection against stopping a Grid bot while paired SELL levels remain open
+- Password-protected dashboard with signed HttpOnly session cookies
+- Docker deployment with a single execution worker and public health-check
+- Persistent SQLite volume support and retained startup backups
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -223,6 +226,36 @@ open levels and positions intact. A Grid bot with open paired SELL levels cannot
 be stopped; pause it instead so its paper position is not silently orphaned.
 
 Trades and bot events can be downloaded as CSV from the dashboard.
+
+## Cloud deployment
+
+The repository includes a production `Dockerfile`. It starts exactly one Uvicorn
+worker because multiple workers would duplicate Grid/DCA background execution.
+The public `/health` endpoint can be used by the hosting platform; dashboard and
+management APIs require login when `DASHBOARD_PASSWORD` is configured.
+
+For Railway or another Docker host:
+
+1. Deploy this GitHub repository using its root `Dockerfile`.
+2. Attach a persistent volume mounted at `/data`.
+3. Configure the health-check path as `/health`.
+4. Generate a public HTTPS domain.
+5. Add these environment variables in the hosting dashboard:
+
+```text
+TRADING_MODE=PAPER
+SQLITE_PATH=/data/spot_bot.db
+SQLITE_BACKUP_COUNT=5
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=<unique password with at least 12 characters>
+SESSION_SECRET=<random secret with at least 32 characters>
+SECURE_COOKIES=true
+```
+
+Never commit the real password or session secret. In cloud mode the app refuses
+to start with a short password or missing session secret. Backups are written to
+`/data/backups` at startup, with the newest `SQLITE_BACKUP_COUNT` files retained.
+Local development remains password-free when `DASHBOARD_PASSWORD` is empty.
 
 ## Tests
 

@@ -1,4 +1,6 @@
 import sqlite3
+from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,21 @@ class SQLiteStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    def create_backup(self, retain: int = 5) -> str | None:
+        if self.path == ":memory:" or not Path(self.path).exists() or retain <= 0:
+            return None
+        source_path = Path(self.path).resolve()
+        backup_dir = source_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = backup_dir / f"{source_path.stem}-{timestamp}.db"
+        with closing(sqlite3.connect(source_path)) as source, closing(sqlite3.connect(target)) as destination:
+            source.backup(destination)
+        backups = sorted(backup_dir.glob(f"{source_path.stem}-*.db"), reverse=True)
+        for old_backup in backups[retain:]:
+            old_backup.unlink()
+        return str(target)
 
     def _initialize(self) -> None:
         with self.connect() as db:

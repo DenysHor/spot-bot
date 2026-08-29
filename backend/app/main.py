@@ -4,13 +4,14 @@ from dataclasses import asdict
 from io import StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.backtest.grid import GridBacktester
 from app.core.config import settings
+from app.core.auth import SessionAuth, validate_cloud_security
 from app.dca.execution import DcaExecutionEngine
 from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
@@ -21,6 +22,10 @@ from app.risk.manager import RiskLimits, RiskManager
 from app.strategies.smart_grid import SmartGrid
 
 market = BinancePublicClient()
+auth = SessionAuth(
+    settings.dashboard_username, settings.dashboard_password,
+    settings.session_secret, settings.secure_cookies,
+)
 store = SQLiteStore(settings.sqlite_path)
 portfolio = PaperPortfolio(
     starting_quote=settings.paper_start_balance,
@@ -64,6 +69,8 @@ dca_engine = DcaExecutionEngine(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_cloud_security(settings.secure_cookies, settings.dashboard_password, settings.session_secret)
+    app.state.last_backup = store.create_backup(settings.sqlite_backup_count)
     if settings.trading_mode == "PAPER":
         grid_engine.start_background()
         dca_engine.start_background()
@@ -72,9 +79,20 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.10.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.11.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    path = request.url.path
+    public = path == "/" or path == "/health" or path.startswith("/static/") or path.startswith("/api/auth/")
+    if not auth.enabled or public:
+        return await call_next(request)
+    if not auth.verify_token(request.cookies.get(auth.cookie_name)):
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+    return await call_next(request)
 
 
 class PaperBuyRequest(BaseModel):
@@ -124,9 +142,39 @@ class DcaStartRequest(BaseModel):
     dip_trigger_pct: float = Field(default=5.0, gt=0, le=50)
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.get("/", include_in_schema=False)
 async def dashboard() -> FileResponse:
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/api/auth/status", include_in_schema=False)
+async def auth_status(request: Request) -> dict:
+    authenticated = not auth.enabled or auth.verify_token(request.cookies.get(auth.cookie_name))
+    return {"auth_enabled": auth.enabled, "authenticated": authenticated}
+
+
+@app.post("/api/auth/login", include_in_schema=False)
+async def login(request: LoginRequest, response: Response) -> dict:
+    if not auth.enabled:
+        return {"authenticated": True, "auth_enabled": False}
+    if not auth.valid_credentials(request.username, request.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    response.set_cookie(
+        auth.cookie_name, auth.create_token(), max_age=86400, httponly=True,
+        secure=settings.secure_cookies, samesite="strict", path="/",
+    )
+    return {"authenticated": True, "auth_enabled": True}
+
+
+@app.post("/api/auth/logout", include_in_schema=False)
+async def logout(response: Response) -> dict:
+    response.delete_cookie(auth.cookie_name, path="/")
+    return {"authenticated": False}
 
 
 def base_asset_from_symbol(symbol: str) -> str:
@@ -144,10 +192,11 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.10.0",
+        "version": "0.11.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
+        "authentication_enabled": auth.enabled,
     }
 
 

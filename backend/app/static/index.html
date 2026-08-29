@@ -7,12 +7,22 @@
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
+  <div id="login-screen" class="login-screen hidden">
+    <form id="login-form" class="login-card">
+      <p class="eyebrow">SECURE ACCESS</p>
+      <h2>Вхід у Spot Grid Lab</h2>
+      <label>Користувач<input id="login-username" autocomplete="username" required></label>
+      <label>Пароль<input id="login-password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Увійти</button>
+      <p id="login-error" class="negative"></p>
+    </form>
+  </div>
   <header>
     <div>
       <p class="eyebrow">PAPER TRADING · BINANCE MARKET DATA</p>
       <h1>Spot Grid Lab</h1>
     </div>
-    <div class="status"><span id="status-dot"></span><span id="status-text">Підключення…</span></div>
+    <div class="header-actions"><div class="status"><span id="status-dot"></span><span id="status-text">Підключення…</span></div><button id="logout-button" class="ghost hidden">Вийти</button></div>
   </header>
 
   <main>

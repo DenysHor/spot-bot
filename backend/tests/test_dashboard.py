@@ -22,6 +22,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Grid Optimizer" in page.text
     assert "Walk-forward 70/30" in page.text
     assert "SAFETY &amp; MONITORING" in page.text
+    assert "Вхід у Spot Grid Lab" in page.text
     assert "SOLUSDT" in page.text
     assert styles.status_code == 200
     assert "--green" in styles.text
