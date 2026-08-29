@@ -9,12 +9,16 @@ from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
 from app.paper.broker import PaperBroker
 from app.paper.portfolio import PaperPortfolio
+from app.persistence.sqlite import SQLiteStore
+from app.risk.manager import RiskLimits, RiskManager
 from app.strategies.smart_grid import SmartGrid
 
 market = BinancePublicClient()
+store = SQLiteStore(settings.sqlite_path)
 portfolio = PaperPortfolio(
     starting_quote=settings.paper_start_balance,
     quote_asset=settings.quote_asset,
+    store=store,
 )
 broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
@@ -29,6 +33,12 @@ grid_engine = GridExecutionEngine(
     broker=broker,
     price_provider=current_price,
     poll_seconds=getattr(settings, "grid_poll_seconds", 5.0),
+    store=store,
+    risk_manager=RiskManager(RiskLimits(
+        max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
+        max_position_pct=settings.max_position_pct,
+        reserve_quote_pct=settings.reserve_usdt_pct,
+    )),
 )
 
 
@@ -40,7 +50,7 @@ async def lifespan(app: FastAPI):
     await grid_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.4.0", lifespan=lifespan)
 
 
 class PaperBuyRequest(BaseModel):
@@ -79,7 +89,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",

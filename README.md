@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.3.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.4.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -26,7 +26,9 @@ Binance Spot trading manager with three execution modes:
 - Per-grid realized cycle P&L and completed-cycle count
 - Configurable market polling interval (`GRID_POLL_SECONDS`, default 5 sec)
 - One running grid bot per symbol in v0.3 to prevent position conflicts
-- Basic risk manager foundation
+- SQLite persistence for the paper portfolio, positions, trades, grid bots, levels and events
+- Automatic restoration of active bots and paper balances after a server restart
+- RiskManager enforcement before every automatic grid BUY
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -76,6 +78,19 @@ Start a bot:
 
 The server then polls the real Binance price in the background. If price crosses a BUY trigger, the PaperBroker records a simulated BUY and creates a paired SELL one grid step above the fill. When that SELL is crossed, the bot records the cycle P&L and creates a replacement BUY one step below the sell fill.
 
+Before every automatic BUY, RiskManager enforces `MAX_PORTFOLIO_ALLOCATION_PCT`,
+`MAX_POSITION_PCT`, and `RESERVE_USDT_PCT`. A rejected order remains open and a
+persisted `BUY_BLOCKED` event records the reason and currently allowed maximum.
+
+## Persistence
+
+PAPER state is stored in SQLite at `SQLITE_PATH` (`data/spot_bot.db` by default,
+relative to the process working directory). The schema uses plain tables and a
+`schema_version` row so future migrations can stay incremental. On startup the
+portfolio, trade journal, positions, grid bots, open levels and event history are
+restored automatically. `POST /api/paper/reset` clears both persisted portfolio
+and grid state and creates a fresh paper balance.
+
 ## Useful endpoints
 
 ```text
@@ -106,14 +121,12 @@ pytest -q
 
 ## Next milestone
 
-1. SQLite persistence so bots survive server restarts
-2. Enforce RiskManager on every automatic BUY
-3. Historical candle backtesting with fees
-4. Web dashboard with bot cards, chart, levels and P&L
-5. Smart DCA
-6. Telegram notifications
-7. Binance Spot Testnet execution
-8. Live execution only after validation
+1. Historical candle backtesting with fees
+2. Web dashboard with bot cards, chart, levels and P&L
+3. Smart DCA
+4. Telegram notifications
+5. Binance Spot Testnet execution
+6. Live execution only after validation
 
 ## Safety
 

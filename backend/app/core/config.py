@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     max_position_pct: float = 10.0
     reserve_usdt_pct: float = 20.0
     grid_poll_seconds: float = 5.0
+    sqlite_path: str = "data/spot_bot.db"
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000

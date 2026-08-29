@@ -1,6 +1,11 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Protocol
+
+
+class PortfolioStore(Protocol):
+    def load_portfolio(self, portfolio: "PaperPortfolio") -> bool: ...
+    def save_portfolio(self, portfolio: "PaperPortfolio") -> None: ...
 
 
 @dataclass
@@ -27,7 +32,8 @@ class Position:
 
 
 class PaperPortfolio:
-    def __init__(self, starting_quote: float = 10_000.0, quote_asset: str = "USDT") -> None:
+    def __init__(self, starting_quote: float = 10_000.0, quote_asset: str = "USDT", store: PortfolioStore | None = None) -> None:
+        self.store = store
         self.quote_asset = quote_asset
         self.starting_quote = starting_quote
         self.quote_balance = starting_quote
@@ -36,6 +42,8 @@ class PaperPortfolio:
         self.realized_pnl = 0.0
         self.fees_paid = 0.0
         self._next_trade_id = 1
+        if self.store is not None and not self.store.load_portfolio(self):
+            self.store.save_portfolio(self)
 
     def reset(self) -> None:
         self.quote_balance = self.starting_quote
@@ -44,6 +52,7 @@ class PaperPortfolio:
         self.realized_pnl = 0.0
         self.fees_paid = 0.0
         self._next_trade_id = 1
+        self.persist()
 
     def position(self, asset: str) -> Position:
         if asset not in self.positions:
@@ -53,6 +62,10 @@ class PaperPortfolio:
     def record_trade(self, trade: Trade) -> None:
         self.trades.append(trade)
         self._next_trade_id += 1
+
+    def persist(self) -> None:
+        if self.store is not None:
+            self.store.save_portfolio(self)
 
     def next_trade_id(self) -> int:
         return self._next_trade_id

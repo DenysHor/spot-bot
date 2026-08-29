@@ -36,6 +36,7 @@ class PaperBroker:
             fee_quote=fee,
         )
         self.portfolio.record_trade(trade)
+        self.portfolio.persist()
         return trade
 
     def market_sell(self, symbol: str, base_asset: str, price: float, quantity: float) -> Trade:
@@ -72,4 +73,5 @@ class PaperBroker:
             realized_pnl=realized_pnl,
         )
         self.portfolio.record_trade(trade)
+        self.portfolio.persist()
         return trade

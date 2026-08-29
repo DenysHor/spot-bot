@@ -5,6 +5,7 @@ from typing import Awaitable, Callable
 from uuid import uuid4
 
 from app.paper.broker import PaperBroker
+from app.risk.manager import RiskManager
 
 
 @dataclass
@@ -70,11 +71,14 @@ class GridExecutionEngine:
     This is deterministic execution logic, not a price prediction model.
     """
 
-    def __init__(self, broker: PaperBroker, price_provider: PriceProvider, poll_seconds: float = 5.0) -> None:
+    def __init__(self, broker: PaperBroker, price_provider: PriceProvider, poll_seconds: float = 5.0,
+                 store=None, risk_manager: RiskManager | None = None) -> None:
         self.broker = broker
         self.price_provider = price_provider
         self.poll_seconds = max(1.0, poll_seconds)
-        self.bots: dict[str, GridBotState] = {}
+        self.store = store
+        self.risk_manager = risk_manager
+        self.bots: dict[str, GridBotState] = store.load_bots() if store is not None else {}
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -131,12 +135,14 @@ class GridExecutionEngine:
             message=f"Grid started with {levels_each_side} BUY levels",
         ))
         self.bots[bot.id] = bot
+        self._persist(bot)
         return bot
 
     def stop_bot(self, bot_id: str) -> GridBotState:
         bot = self.get_bot(bot_id)
         bot.status = "STOPPED"
         bot.events.append(GridEvent(timestamp=self._now(), event="BOT_STOPPED", price=bot.last_price))
+        self._persist(bot)
         return bot
 
     def get_bot(self, bot_id: str) -> GridBotState:
@@ -149,6 +155,28 @@ class GridExecutionEngine:
 
     def reset(self) -> None:
         self.bots = {}
+        if self.store is not None:
+            self.store.clear_bots()
+
+    def _persist(self, bot: GridBotState) -> None:
+        if self.store is not None:
+            self.store.save_bot(bot)
+
+    def _risk_decision(self, bot: GridBotState, requested_quote: float, current_price: float):
+        if self.risk_manager is None:
+            return None
+        portfolio = self.broker.portfolio
+        position = portfolio.position(bot.base_asset)
+        prices = {bot.base_asset: current_price}
+        equity = portfolio.snapshot(prices)["total_equity"]
+        total_grid_allocation = sum(x.spent_quote for x in self.bots.values())
+        return self.risk_manager.check_buy(
+            total_equity=equity,
+            free_quote=portfolio.quote_balance,
+            current_bot_allocation=total_grid_allocation,
+            current_position_value=position.quantity * current_price,
+            requested_quote=requested_quote * (1 + self.broker.fee_rate),
+        )
 
     async def tick_bot(self, bot_id: str, price: float | None = None) -> GridBotState:
         bot = self.get_bot(bot_id)
@@ -169,6 +197,14 @@ class GridExecutionEngine:
         for order in buys:
             total_cost = order.quote_amount * (1 + self.broker.fee_rate)
             if bot.spent_quote + total_cost > bot.budget_quote + 1e-9:
+                continue
+            decision = self._risk_decision(bot, order.quote_amount, current)
+            if decision is not None and not decision.allowed:
+                bot.events.append(GridEvent(
+                    timestamp=self._now(), event="BUY_BLOCKED", price=current, side="BUY",
+                    quote_amount=order.quote_amount,
+                    message=f"{decision.reason}; max_order_quote={decision.max_order_quote:.8f}",
+                ))
                 continue
             try:
                 trade = self.broker.market_buy(bot.symbol, bot.base_asset, current, order.quote_amount)
@@ -226,6 +262,7 @@ class GridExecutionEngine:
                 message=f"Replacement BUY created at {replacement_buy:.8f}",
             ))
 
+        self._persist(bot)
         return bot
 
     async def tick_all(self) -> None:
@@ -239,6 +276,7 @@ class GridExecutionEngine:
                     timestamp=self._now(), event="ENGINE_ERROR", price=bot.last_price,
                     message=str(exc),
                 ))
+                self._persist(bot)
 
     async def run_forever(self) -> None:
         self._running = True
