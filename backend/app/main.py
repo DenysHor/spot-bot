@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.backtest.grid import GridBacktester
@@ -52,7 +55,9 @@ async def lifespan(app: FastAPI):
     await grid_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.6.0", lifespan=lifespan)
+static_dir = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 class PaperBuyRequest(BaseModel):
@@ -81,6 +86,11 @@ class GridBacktestRequest(GridPlanRequest):
     limit: int = Field(default=500, ge=2, le=1000)
 
 
+@app.get("/", include_in_schema=False)
+async def dashboard() -> FileResponse:
+    return FileResponse(static_dir / "index.html")
+
+
 def base_asset_from_symbol(symbol: str) -> str:
     symbol = symbol.upper()
     quote = settings.quote_asset.upper()
@@ -96,7 +106,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -117,6 +127,26 @@ async def market_snapshot(symbol: str) -> dict:
         }
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Binance market-data error: {exc}") from exc
+
+
+@app.get("/api/market/{symbol}/klines")
+async def market_klines(symbol: str, interval: str = "1h", limit: int = 120) -> dict:
+    allowed_intervals = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"}
+    if interval not in allowed_intervals:
+        raise HTTPException(status_code=400, detail="Unsupported Binance interval")
+    if limit < 2 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 2 and 500")
+    try:
+        rows = await market.klines(symbol.upper(), interval=interval, limit=limit)
+        return {"symbol": symbol.upper(), "interval": interval, "candles": [
+            {
+                "open_time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
+                "low": float(row[3]), "close": float(row[4]), "close_time": int(row[6]),
+            }
+            for row in rows
+        ]}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Binance kline error: {exc}") from exc
 
 
 @app.get("/api/paper/portfolio")

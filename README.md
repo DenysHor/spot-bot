@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.5.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.6.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -31,6 +31,9 @@ Binance Spot trading manager with three execution modes:
 - RiskManager enforcement before every automatic grid BUY
 - Historical Grid backtesting on up to 1,000 public Binance candles
 - Backtest report with net return, realized/unrealized P&L, fees, drawdown, cycles, trades, equity curve and buy-and-hold comparison
+- Responsive web dashboard with portfolio metrics, PAPER bot controls and bot cards
+- Binance candlestick chart with active BUY/SELL grid-level overlays
+- Browser-based historical backtest form and performance summary
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -62,6 +65,16 @@ Open Swagger:
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+Open the dashboard:
+
+```text
+http://127.0.0.1:8000/
+```
+
+The dashboard is served directly by FastAPI and requires no separate frontend
+build. It refreshes portfolio and bot state automatically, while all trading
+actions remain PAPER-only.
 
 ## Grid workflow
 
@@ -121,6 +134,7 @@ not promises of future performance.
 ```text
 GET  /health
 GET  /api/market/BTCUSDT
+GET  /api/market/BTCUSDT/klines?interval=1h&limit=120
 GET  /api/paper/portfolio
 GET  /api/paper/trades
 POST /api/paper/buy
@@ -147,11 +161,10 @@ pytest -q
 
 ## Next milestone
 
-1. Web dashboard with bot cards, chart, levels and P&L
-2. Smart DCA
-3. Telegram notifications
-4. Binance Spot Testnet execution
-5. Live execution only after validation
+1. Smart DCA
+2. Telegram notifications
+3. Binance Spot Testnet execution
+4. Live execution only after validation
 
 ## Safety
 
