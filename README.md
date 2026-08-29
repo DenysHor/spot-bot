@@ -77,7 +77,8 @@ http://127.0.0.1:8000/
 
 The dashboard is served directly by FastAPI and requires no separate frontend
 build. It refreshes portfolio and bot state automatically, while all trading
-actions remain PAPER-only.
+actions remain PAPER-only. The market selector includes BTC, ETH, BNB and SOL
+quoted in USDT; the API also accepts other valid USDT Spot symbols.
 
 ## Smart DCA
 
