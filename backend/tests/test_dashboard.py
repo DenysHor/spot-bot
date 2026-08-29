@@ -16,8 +16,10 @@ def test_dashboard_and_static_assets_are_served():
     assert "/api/backtest/grid" in script.text
     assert "/api/dca/bots/start" in script.text
     assert "/api/backtest/grid/optimize" in script.text
+    assert "/api/backtest/grid/walk-forward" in script.text
     assert "Smart DCA" in page.text
     assert "Grid Optimizer" in page.text
+    assert "Walk-forward 70/30" in page.text
     assert "SOLUSDT" in page.text
     assert styles.status_code == 200
     assert "--green" in styles.text

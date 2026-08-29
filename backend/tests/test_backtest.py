@@ -63,3 +63,18 @@ def test_optimizer_ranks_identical_candle_combinations():
     assert result["best"] == result["results"][0]
     assert result["best"]["step_pct"] == 1
     assert result["results"][-1]["completed_cycles"] == 0
+
+
+def test_walk_forward_uses_separate_validation_period():
+    candles = [kline(60_000 * i, 100, 102, 98, 100) for i in range(20)]
+    result = asyncio.run(GridBacktester().walk_forward(
+        symbol="SOLUSDT", base_asset="SOL", raw_candles=candles,
+        budget_quote=1_000, step_pcts=[1, 3], levels_options=[4], training_pct=70,
+    ))
+
+    assert result["split"]["training_candles"] == 14
+    assert result["split"]["validation_candles"] == 7
+    assert result["selected_parameters"]["step_pct"] == 1
+    assert result["validation_performance"]["completed_cycles"] > 0
+    assert result["status"] == "PASSED"
+    assert result["pass_rule"].startswith("validation return")

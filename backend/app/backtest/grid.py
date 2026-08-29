@@ -174,3 +174,55 @@ class GridBacktester:
             "best": results[0],
             "results": results,
         }
+
+    async def walk_forward(
+        self,
+        symbol: str,
+        base_asset: str,
+        raw_candles: list[list[Any]],
+        budget_quote: float,
+        step_pcts: list[float],
+        levels_options: list[int],
+        training_pct: float = 70.0,
+    ) -> dict:
+        if len(raw_candles) < 10:
+            raise ValueError("Walk-forward validation requires at least 10 candles")
+        if training_pct < 50 or training_pct > 90:
+            raise ValueError("training_pct must be between 50 and 90")
+        split_index = int(len(raw_candles) * training_pct / 100)
+        training_candles = raw_candles[:split_index]
+        # Keep the split candle as the validation reference price; no trades occur on it.
+        validation_candles = raw_candles[split_index - 1:]
+        optimization = await self.optimize(
+            symbol=symbol, base_asset=base_asset, raw_candles=training_candles,
+            budget_quote=budget_quote, step_pcts=step_pcts, levels_options=levels_options,
+        )
+        best = optimization["best"]
+        validation = await self.run(
+            symbol=symbol, base_asset=base_asset, raw_candles=validation_candles,
+            budget_quote=budget_quote, step_pct=best["step_pct"],
+            levels_each_side=best["levels_each_side"],
+        )
+        performance = validation["performance"]
+        passed = performance["return_pct"] > 0 and performance["completed_cycles"] >= 1
+        return {
+            "symbol": symbol.upper(),
+            "split": {
+                "training_pct": training_pct,
+                "training_candles": len(training_candles),
+                "validation_candles": len(validation_candles),
+            },
+            "selected_parameters": {
+                "step_pct": best["step_pct"],
+                "levels_each_side": best["levels_each_side"],
+            },
+            "training_performance": {
+                key: best[key] for key in (
+                    "return_pct", "max_drawdown_pct", "fees_paid", "completed_cycles", "trade_count"
+                )
+            },
+            "validation_performance": performance,
+            "return_degradation_pct_points": best["return_pct"] - performance["return_pct"],
+            "status": "PASSED" if passed else "FAILED",
+            "pass_rule": "validation return > 0 and at least one completed cycle",
+        }

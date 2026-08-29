@@ -82,9 +82,13 @@
       <div id="backtest-result" class="backtest-result hidden"></div>
       <div class="optimizer-head">
         <div><h2>Grid Optimizer</h2><p class="form-note">Порівнює 15 комбінацій на тих самих свічках.</p></div>
-        <button id="optimize-button" type="button">Знайти найкращі параметри</button>
+        <div class="optimizer-actions">
+          <button class="ghost" id="walk-forward-button" type="button">Walk-forward 70/30</button>
+          <button id="optimize-button" type="button">Знайти найкращі параметри</button>
+        </div>
       </div>
       <div id="optimizer-result" class="optimizer-result hidden"></div>
+      <div id="walk-forward-result" class="walk-forward-result hidden"></div>
     </section>
   </main>
   <div id="toast" role="status"></div>

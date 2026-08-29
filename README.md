@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.8.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.9.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -39,6 +39,7 @@ Binance Spot trading manager with three execution modes:
 - Smart DCA controls, budget usage and purchase statistics in the dashboard
 - Grid Optimizer comparing up to 30 parameter combinations on one candle dataset
 - Risk-adjusted optimizer ranking with a low-cycle confidence penalty
+- 70/30 walk-forward validation on a separate unseen candle period
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -166,6 +167,12 @@ steps `0.5, 1, 1.5, 2, 3%` with `4, 6, 8` levels. Ranking uses return divided by
 `1 + max drawdown`, with a confidence penalty when fewer than three cycles were
 completed. The score is a comparison aid, not a trading recommendation.
 
+`POST /api/backtest/grid/walk-forward` first runs the optimizer on the initial
+70% of candles, then tests only its selected parameters on the final unseen 30%.
+The validation passes when the unseen period remains profitable and completes at
+least one full cycle. Training and validation return, drawdown, fees and cycles
+are reported separately to expose historical overfitting.
+
 ## Useful endpoints
 
 ```text
@@ -180,6 +187,7 @@ POST /api/paper/reset
 POST /api/grid/plan
 POST /api/backtest/grid
 POST /api/backtest/grid/optimize
+POST /api/backtest/grid/walk-forward
 GET  /api/dca/bots
 GET  /api/dca/bots/{bot_id}
 POST /api/dca/bots/start
