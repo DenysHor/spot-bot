@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.4.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.5.0**. Automatic Grid execution is PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -29,6 +29,8 @@ Binance Spot trading manager with three execution modes:
 - SQLite persistence for the paper portfolio, positions, trades, grid bots, levels and events
 - Automatic restoration of active bots and paper balances after a server restart
 - RiskManager enforcement before every automatic grid BUY
+- Historical Grid backtesting on up to 1,000 public Binance candles
+- Backtest report with net return, realized/unrealized P&L, fees, drawdown, cycles, trades, equity curve and buy-and-hold comparison
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -91,6 +93,29 @@ portfolio, trade journal, positions, grid bots, open levels and event history ar
 restored automatically. `POST /api/paper/reset` clears both persisted portfolio
 and grid state and creates a fresh paper balance.
 
+## Historical Grid backtest
+
+`POST /api/backtest/grid` downloads public Binance candles and runs an isolated
+simulation. It does not change the SQLite database, paper portfolio, or active bots.
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "budget_quote": 1000,
+  "step_pct": 1.5,
+  "levels_each_side": 4,
+  "interval": "1h",
+  "limit": 500
+}
+```
+
+The result includes portfolio and trade details, completed grid cycles, all fees,
+maximum drawdown, an equity curve, and a buy-and-hold benchmark. Binance OHLC
+candles do not reveal the exact tick order inside each candle. For reproducibility,
+the simulator assumes `open → low → high → close` for bullish candles and
+`open → high → low → close` for bearish candles. Backtest results are estimates,
+not promises of future performance.
+
 ## Useful endpoints
 
 ```text
@@ -102,6 +127,7 @@ POST /api/paper/buy
 POST /api/paper/sell
 POST /api/paper/reset
 POST /api/grid/plan
+POST /api/backtest/grid
 GET  /api/grid/bots
 GET  /api/grid/bots/{bot_id}
 POST /api/grid/bots/start
@@ -121,12 +147,11 @@ pytest -q
 
 ## Next milestone
 
-1. Historical candle backtesting with fees
-2. Web dashboard with bot cards, chart, levels and P&L
-3. Smart DCA
-4. Telegram notifications
-5. Binance Spot Testnet execution
-6. Live execution only after validation
+1. Web dashboard with bot cards, chart, levels and P&L
+2. Smart DCA
+3. Telegram notifications
+4. Binance Spot Testnet execution
+5. Live execution only after validation
 
 ## Safety
 

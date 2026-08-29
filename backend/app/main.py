@@ -4,6 +4,7 @@ from dataclasses import asdict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.backtest.grid import GridBacktester
 from app.core.config import settings
 from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
@@ -22,6 +23,7 @@ portfolio = PaperPortfolio(
 )
 broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
+backtester = GridBacktester(fee_rate=0.001)
 
 
 async def current_price(symbol: str) -> float:
@@ -50,7 +52,7 @@ async def lifespan(app: FastAPI):
     await grid_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.5.0", lifespan=lifespan)
 
 
 class PaperBuyRequest(BaseModel):
@@ -74,6 +76,11 @@ class GridStartRequest(GridPlanRequest):
     pass
 
 
+class GridBacktestRequest(GridPlanRequest):
+    interval: str = Field(default="1h", pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|6h|8h|12h|1d|3d|1w|1M)$")
+    limit: int = Field(default=500, ge=2, le=1000)
+
+
 def base_asset_from_symbol(symbol: str) -> str:
     symbol = symbol.upper()
     quote = settings.quote_asset.upper()
@@ -89,7 +96,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -187,6 +194,27 @@ async def grid_plan(request: GridPlanRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid plan failed: {exc}") from exc
+
+
+@app.post("/api/backtest/grid")
+async def grid_backtest(request: GridBacktestRequest) -> dict:
+    """Run an isolated historical simulation without changing persisted PAPER state."""
+    try:
+        symbol = request.symbol.upper()
+        base_asset = base_asset_from_symbol(symbol)
+        candles = await market.klines(symbol, interval=request.interval, limit=request.limit)
+        return await backtester.run(
+            symbol=symbol,
+            base_asset=base_asset,
+            raw_candles=candles,
+            budget_quote=request.budget_quote,
+            step_pct=request.step_pct,
+            levels_each_side=request.levels_each_side,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Grid backtest failed: {exc}") from exc
 
 
 @app.get("/api/grid/bots")
