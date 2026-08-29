@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.8.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -94,6 +94,15 @@ class GridBacktestRequest(GridPlanRequest):
     limit: int = Field(default=500, ge=2, le=1000)
 
 
+class GridOptimizeRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    budget_quote: float = Field(default=1000.0, gt=0)
+    interval: str = Field(default="1h", pattern=r"^(1m|3m|5m|15m|30m|1h|2h|4h|6h|8h|12h|1d|3d|1w|1M)$")
+    limit: int = Field(default=500, ge=2, le=1000)
+    step_pcts: list[float] = Field(default_factory=lambda: [0.5, 1.0, 1.5, 2.0, 3.0], min_length=1, max_length=10)
+    levels_options: list[int] = Field(default_factory=lambda: [4, 6, 8], min_length=1, max_length=10)
+
+
 class DcaStartRequest(BaseModel):
     symbol: str = "BTCUSDT"
     budget_quote: float = Field(default=1000.0, gt=0)
@@ -122,7 +131,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -262,6 +271,28 @@ async def grid_backtest(request: GridBacktestRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid backtest failed: {exc}") from exc
+
+
+@app.post("/api/backtest/grid/optimize")
+async def grid_optimize(request: GridOptimizeRequest) -> dict:
+    """Compare Grid parameters on one identical candle dataset without mutating PAPER state."""
+    try:
+        if any(step <= 0 or step > 25 for step in request.step_pcts):
+            raise ValueError("Every step_pct must be between 0 and 25")
+        if any(levels < 1 or levels > 50 for levels in request.levels_options):
+            raise ValueError("Every levels option must be between 1 and 50")
+        symbol = request.symbol.upper()
+        base_asset = base_asset_from_symbol(symbol)
+        candles = await market.klines(symbol, interval=request.interval, limit=request.limit)
+        return await backtester.optimize(
+            symbol=symbol, base_asset=base_asset, raw_candles=candles,
+            budget_quote=request.budget_quote, step_pcts=request.step_pcts,
+            levels_options=request.levels_options,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Grid optimization failed: {exc}") from exc
 
 
 @app.get("/api/dca/bots")

@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.7.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.8.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -37,6 +37,8 @@ Binance Spot trading manager with three execution modes:
 - Smart DCA with scheduled purchases and extra dip-triggered purchases
 - RiskManager enforcement and SQLite recovery for every DCA bot and event
 - Smart DCA controls, budget usage and purchase statistics in the dashboard
+- Grid Optimizer comparing up to 30 parameter combinations on one candle dataset
+- Risk-adjusted optimizer ranking with a low-cycle confidence penalty
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -158,6 +160,12 @@ the simulator assumes `open → low → high → close` for bullish candles and
 `open → high → low → close` for bearish candles. Backtest results are estimates,
 not promises of future performance.
 
+`POST /api/backtest/grid/optimize` reuses one identical candle dataset for every
+combination, so results are directly comparable. The dashboard default checks
+steps `0.5, 1, 1.5, 2, 3%` with `4, 6, 8` levels. Ranking uses return divided by
+`1 + max drawdown`, with a confidence penalty when fewer than three cycles were
+completed. The score is a comparison aid, not a trading recommendation.
+
 ## Useful endpoints
 
 ```text
@@ -171,6 +179,7 @@ POST /api/paper/sell
 POST /api/paper/reset
 POST /api/grid/plan
 POST /api/backtest/grid
+POST /api/backtest/grid/optimize
 GET  /api/dca/bots
 GET  /api/dca/bots/{bot_id}
 POST /api/dca/bots/start
@@ -195,10 +204,9 @@ pytest -q
 
 ## Next milestone
 
-1. Automated Grid parameter comparison
-2. Telegram notifications
-3. Binance Spot Testnet execution
-4. Live execution only after validation
+1. Telegram notifications
+2. Binance Spot Testnet execution
+3. Live execution only after validation
 
 ## Safety
 

@@ -43,3 +43,23 @@ def test_candle_path_and_validation_are_deterministic():
         assert False, "Expected invalid OHLC range"
     except ValueError as exc:
         assert "OHLC" in str(exc)
+
+
+def test_optimizer_ranks_identical_candle_combinations():
+    candles = [
+        kline(0, 100, 100, 100, 100),
+        kline(60_000, 100, 101, 98, 99),
+        kline(120_000, 99, 102, 99, 101),
+        kline(180_000, 101, 101, 98, 99),
+        kline(240_000, 99, 102, 99, 101),
+    ]
+    result = asyncio.run(GridBacktester().optimize(
+        symbol="SOLUSDT", base_asset="SOL", raw_candles=candles,
+        budget_quote=1_000, step_pcts=[1, 3], levels_options=[4, 6],
+    ))
+
+    assert result["tested_combinations"] == 4
+    assert result["results"][0]["rank"] == 1
+    assert result["best"] == result["results"][0]
+    assert result["best"]["step_pct"] == 1
+    assert result["results"][-1]["completed_cycles"] == 0

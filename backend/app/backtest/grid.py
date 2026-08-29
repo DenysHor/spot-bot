@@ -132,3 +132,45 @@ class GridBacktester:
             "grid_events": [asdict(event) for event in bot.events],
             "equity_curve": equity_curve,
         }
+
+    async def optimize(
+        self,
+        symbol: str,
+        base_asset: str,
+        raw_candles: list[list[Any]],
+        budget_quote: float,
+        step_pcts: list[float],
+        levels_options: list[int],
+    ) -> dict:
+        if not step_pcts or not levels_options:
+            raise ValueError("Optimizer parameter lists cannot be empty")
+        if len(step_pcts) * len(levels_options) > 30:
+            raise ValueError("Optimizer supports at most 30 parameter combinations")
+        results = []
+        for step_pct in step_pcts:
+            for levels in levels_options:
+                report = await self.run(
+                    symbol=symbol, base_asset=base_asset, raw_candles=raw_candles,
+                    budget_quote=budget_quote, step_pct=step_pct, levels_each_side=levels,
+                )
+                performance = report["performance"]
+                # Prefer return with low drawdown, but penalize results based on fewer than 3 cycles.
+                cycle_confidence = min(1.0, performance["completed_cycles"] / 3)
+                score = (performance["return_pct"] / (1 + performance["max_drawdown_pct"])) * cycle_confidence
+                results.append({
+                    "rank": 0,
+                    "step_pct": step_pct,
+                    "levels_each_side": levels,
+                    "score": score,
+                    **performance,
+                })
+        results.sort(key=lambda item: (item["score"], item["return_pct"], item["completed_cycles"]), reverse=True)
+        for rank, result in enumerate(results, start=1):
+            result["rank"] = rank
+        return {
+            "symbol": symbol.upper(),
+            "tested_combinations": len(results),
+            "ranking_method": "return / (1 + max_drawdown_pct), with confidence penalty below 3 cycles",
+            "best": results[0],
+            "results": results,
+        }
