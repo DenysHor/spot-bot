@@ -9,10 +9,11 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     current = now or datetime.now(timezone.utc)
     start = current - timedelta(days=days)
     symbol = symbol.upper()
+    matching_bots = [bot for bot in bots.values() if bot.symbol == symbol]
     filtered_trades = [t for t in trades if t.symbol == symbol and _parse(t.timestamp) >= start]
     cycle_events = [
         event
-        for bot in bots.values() if bot.symbol == symbol
+        for bot in matching_bots
         for event in bot.events
         if event.event == "SELL_FILLED" and _parse(event.timestamp) >= start
     ]
@@ -20,6 +21,15 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     fees = sum(trade.fee_quote for trade in filtered_trades)
     volume = sum(trade.quote_amount for trade in filtered_trades)
     profitable = sum(event.realized_cycle_pnl > 0 for event in cycle_events)
+    positive_pnl = sum(max(0.0, event.realized_cycle_pnl) for event in cycle_events)
+    negative_pnl = abs(sum(min(0.0, event.realized_cycle_pnl) for event in cycle_events))
+    allocated_budget = max((bot.budget_quote for bot in matching_bots), default=0.0)
+    activity_times = [_parse(t.timestamp) for t in filtered_trades]
+    activity_times.extend(
+        _parse(event.timestamp) for bot in matching_bots for event in bot.events
+        if _parse(event.timestamp) >= start
+    )
+    active_since = min(activity_times, default=None)
 
     daily = {}
     for offset in range(days):
@@ -34,6 +44,13 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
         day = _parse(trade.timestamp).date().isoformat()
         if day in daily:
             daily[day]["fees"] += trade.fee_quote
+    running_cycle_pnl = 0.0
+    cycle_peak = 0.0
+    max_drawdown = 0.0
+    for event in sorted(cycle_events, key=lambda item: _parse(item.timestamp)):
+        running_cycle_pnl += event.realized_cycle_pnl
+        cycle_peak = max(cycle_peak, running_cycle_pnl)
+        max_drawdown = max(max_drawdown, cycle_peak - running_cycle_pnl)
     cumulative = 0.0
     series = []
     for item in daily.values():
@@ -44,6 +61,8 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     return {
         "symbol": symbol,
         "days": days,
+        "active_since": active_since.isoformat() if active_since else None,
+        "elapsed_hours": (current - active_since).total_seconds() / 3600 if active_since else 0.0,
         "metrics": {
             "realized_pnl": realized,
             "fees": fees,
@@ -53,6 +72,11 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
             "profitable_cycles": profitable,
             "win_rate_pct": profitable / cycles * 100 if cycles else 0.0,
             "avg_cycle_pnl": realized / cycles if cycles else 0.0,
+            "allocated_budget": allocated_budget,
+            "grid_return_pct": realized / allocated_budget * 100 if allocated_budget else 0.0,
+            "realized_max_drawdown": max_drawdown,
+            "realized_max_drawdown_pct": max_drawdown / allocated_budget * 100 if allocated_budget else 0.0,
+            "profit_factor": positive_pnl / negative_pnl if negative_pnl else None,
         },
         "series": series,
     }

@@ -1,6 +1,7 @@
 import csv
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
@@ -99,7 +100,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.14.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.15.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -212,7 +213,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.14.0",
+        "version": "0.15.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -577,12 +578,22 @@ async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
         raise HTTPException(status_code=400, detail="days must be 7 or 30")
     result = grid_performance(portfolio.trades, grid_engine.bots, days, symbol)
     try:
-        candles = await current_klines(symbol, interval="1d", limit=days + 1)
+        candles = await current_klines(symbol, interval="1h", limit=min(1000, days * 24 + 2))
+        active_since = result["active_since"]
+        if active_since:
+            active_ms = int(datetime.fromisoformat(active_since).timestamp() * 1000)
+            aligned = [row for row in candles if int(row[0]) >= active_ms]
+            if aligned:
+                candles = aligned
         first = float(candles[0][1])
         last = float(candles[-1][4])
         result["buy_hold_return_pct"] = (last - first) / first * 100 if first else 0.0
+        result["benchmark_from"] = int(candles[0][0])
     except Exception:
         result["buy_hold_return_pct"] = None
+        result["benchmark_from"] = None
+    benchmark = result["buy_hold_return_pct"]
+    result["excess_return_pct"] = result["metrics"]["grid_return_pct"] - benchmark if benchmark is not None else None
     return result
 
 
