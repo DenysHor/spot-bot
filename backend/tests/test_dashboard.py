@@ -37,6 +37,7 @@ def test_kline_endpoint_normalizes_binance_rows(monkeypatch):
         ]
 
     monkeypatch.setattr(main.market, "klines", fake_klines)
+    main.market_health.update({"last_success_at": "", "last_error": "old error"})
     response = TestClient(main.app).get("/api/market/BTCUSDT/klines?interval=1h&limit=2")
 
     assert response.status_code == 200
@@ -44,6 +45,9 @@ def test_kline_endpoint_normalizes_binance_rows(monkeypatch):
     assert data["symbol"] == "BTCUSDT"
     assert data["candles"][0]["close"] == 105.0
     assert data["candles"][1]["high"] == 115.0
+    status = TestClient(main.app).get("/api/monitoring/status").json()
+    assert status["market_data"]["status"] == "ONLINE"
+    assert status["market_data"]["last_success_at"]
 
 
 def test_monitoring_and_csv_exports_are_available():

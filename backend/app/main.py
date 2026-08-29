@@ -54,6 +54,17 @@ async def current_price(symbol: str) -> float:
         raise
 
 
+async def current_klines(symbol: str, interval: str, limit: int) -> list:
+    try:
+        rows = await market.klines(symbol.upper(), interval=interval, limit=limit)
+        market_health["last_success_at"] = PaperPortfolio.now_iso()
+        market_health["last_error"] = ""
+        return rows
+    except Exception as exc:
+        market_health["last_error"] = str(exc)
+        raise
+
+
 grid_engine = GridExecutionEngine(
     broker=broker,
     price_provider=current_price,
@@ -224,7 +235,7 @@ async def market_klines(symbol: str, interval: str = "1h", limit: int = 120) -> 
     if limit < 2 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 2 and 500")
     try:
-        rows = await market.klines(symbol.upper(), interval=interval, limit=limit)
+        rows = await current_klines(symbol, interval=interval, limit=limit)
         return {"symbol": symbol.upper(), "interval": interval, "candles": [
             {
                 "open_time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
@@ -320,7 +331,7 @@ async def grid_backtest(request: GridBacktestRequest) -> dict:
     try:
         symbol = request.symbol.upper()
         base_asset = base_asset_from_symbol(symbol)
-        candles = await market.klines(symbol, interval=request.interval, limit=request.limit)
+        candles = await current_klines(symbol, interval=request.interval, limit=request.limit)
         return await backtester.run(
             symbol=symbol,
             base_asset=base_asset,
@@ -345,7 +356,7 @@ async def grid_optimize(request: GridOptimizeRequest) -> dict:
             raise ValueError("Every levels option must be between 1 and 50")
         symbol = request.symbol.upper()
         base_asset = base_asset_from_symbol(symbol)
-        candles = await market.klines(symbol, interval=request.interval, limit=request.limit)
+        candles = await current_klines(symbol, interval=request.interval, limit=request.limit)
         return await backtester.optimize(
             symbol=symbol, base_asset=base_asset, raw_candles=candles,
             budget_quote=request.budget_quote, step_pcts=request.step_pcts,
@@ -367,7 +378,7 @@ async def grid_walk_forward(request: GridWalkForwardRequest) -> dict:
             raise ValueError("Every levels option must be between 1 and 50")
         symbol = request.symbol.upper()
         base_asset = base_asset_from_symbol(symbol)
-        candles = await market.klines(symbol, interval=request.interval, limit=request.limit)
+        candles = await current_klines(symbol, interval=request.interval, limit=request.limit)
         return await backtester.walk_forward(
             symbol=symbol, base_asset=base_asset, raw_candles=candles,
             budget_quote=request.budget_quote, step_pcts=request.step_pcts,
