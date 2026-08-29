@@ -58,3 +58,43 @@ def test_only_one_running_bot_per_symbol():
         assert False, "Expected duplicate running bot to be rejected"
     except ValueError as exc:
         assert "already exists" in str(exc)
+
+
+def test_grid_auto_pauses_after_three_engine_errors():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def failing_price(symbol: str) -> float:
+        raise RuntimeError("market unavailable")
+
+    engine = GridExecutionEngine(broker=broker, price_provider=failing_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 1.0, 4)
+    for _ in range(3):
+        asyncio.run(engine.tick_all())
+
+    assert bot.status == "PAUSED"
+    assert bot.consecutive_errors == 3
+    assert bot.events[-1].event == "AUTO_PAUSED"
+    engine.resume_bot(bot.id)
+    assert bot.status == "RUNNING"
+    assert bot.consecutive_errors == 0
+
+
+def test_grid_with_open_sell_must_be_paused_not_stopped():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 10.0, 2)
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+
+    try:
+        engine.stop_bot(bot.id)
+        assert False, "Expected stop with open SELL to be rejected"
+    except ValueError as exc:
+        assert "pause" in str(exc).lower()
+    engine.pause_bot(bot.id)
+    assert bot.status == "PAUSED"

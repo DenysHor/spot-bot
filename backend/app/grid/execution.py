@@ -47,11 +47,21 @@ class GridBotState:
     spent_quote: float = 0.0
     realized_pnl: float = 0.0
     completed_cycles: int = 0
+    last_success_at: str = ""
+    consecutive_errors: int = 0
+    paused_reason: str = ""
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
     def snapshot(self) -> dict:
         result = asdict(self)
+        sell_orders = [order for order in self.open_orders if order.side == "SELL"]
+        result["open_exposure_quote"] = sum(order.source_buy_cost for order in sell_orders)
+        result["unrealized_pnl"] = sum(
+            order.quantity * self.last_price * (1 - 0.001) - order.source_buy_cost
+            for order in sell_orders
+        )
+        result["total_pnl"] = self.realized_pnl + result["unrealized_pnl"]
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
         return result
@@ -140,8 +150,31 @@ class GridExecutionEngine:
 
     def stop_bot(self, bot_id: str) -> GridBotState:
         bot = self.get_bot(bot_id)
+        if any(order.side == "SELL" for order in bot.open_orders):
+            raise ValueError("Cannot stop a bot with open SELL levels; pause it instead")
         bot.status = "STOPPED"
         bot.events.append(GridEvent(timestamp=self._now(), event="BOT_STOPPED", price=bot.last_price))
+        self._persist(bot)
+        return bot
+
+    def pause_bot(self, bot_id: str, reason: str = "Paused by user") -> GridBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "RUNNING":
+            raise ValueError("Only a running Grid bot can be paused")
+        bot.status = "PAUSED"
+        bot.paused_reason = reason
+        bot.events.append(GridEvent(timestamp=self._now(), event="BOT_PAUSED", price=bot.last_price, message=reason))
+        self._persist(bot)
+        return bot
+
+    def resume_bot(self, bot_id: str) -> GridBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "PAUSED":
+            raise ValueError("Only a paused Grid bot can be resumed")
+        bot.status = "RUNNING"
+        bot.paused_reason = ""
+        bot.consecutive_errors = 0
+        bot.events.append(GridEvent(timestamp=self._now(), event="BOT_RESUMED", price=bot.last_price))
         self._persist(bot)
         return bot
 
@@ -187,6 +220,8 @@ class GridExecutionEngine:
         if current <= 0:
             raise ValueError("Market price must be positive")
         bot.last_price = current
+        bot.last_success_at = self._now()
+        bot.consecutive_errors = 0
 
         # Process BUYs from highest trigger downward, allowing gap moves to fill several levels.
         buys = sorted(
@@ -272,10 +307,18 @@ class GridExecutionEngine:
             try:
                 await self.tick_bot(bot.id)
             except Exception as exc:
+                bot.consecutive_errors += 1
                 bot.events.append(GridEvent(
                     timestamp=self._now(), event="ENGINE_ERROR", price=bot.last_price,
                     message=str(exc),
                 ))
+                if bot.consecutive_errors >= 3:
+                    bot.status = "PAUSED"
+                    bot.paused_reason = "Auto-paused after 3 consecutive engine errors"
+                    bot.events.append(GridEvent(
+                        timestamp=self._now(), event="AUTO_PAUSED", price=bot.last_price,
+                        message=bot.paused_reason,
+                    ))
                 self._persist(bot)
 
     async def run_forever(self) -> None:

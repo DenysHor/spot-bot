@@ -17,9 +17,11 @@ def test_dashboard_and_static_assets_are_served():
     assert "/api/dca/bots/start" in script.text
     assert "/api/backtest/grid/optimize" in script.text
     assert "/api/backtest/grid/walk-forward" in script.text
+    assert "/api/grid/bots/${id}/pause" in script.text
     assert "Smart DCA" in page.text
     assert "Grid Optimizer" in page.text
     assert "Walk-forward 70/30" in page.text
+    assert "SAFETY &amp; MONITORING" in page.text
     assert "SOLUSDT" in page.text
     assert styles.status_code == 200
     assert "--green" in styles.text
@@ -41,3 +43,17 @@ def test_kline_endpoint_normalizes_binance_rows(monkeypatch):
     assert data["symbol"] == "BTCUSDT"
     assert data["candles"][0]["close"] == 105.0
     assert data["candles"][1]["high"] == 115.0
+
+
+def test_monitoring_and_csv_exports_are_available():
+    client = TestClient(main.app)
+    status = client.get("/api/monitoring/status")
+    trades = client.get("/api/export/trades.csv")
+    events = client.get("/api/export/events.csv")
+
+    assert status.status_code == 200
+    assert "market_data" in status.json()
+    assert trades.status_code == 200
+    assert trades.text.startswith("id,timestamp,symbol")
+    assert events.status_code == 200
+    assert events.text.startswith("strategy,bot_id,symbol")

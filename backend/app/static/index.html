@@ -51,6 +51,21 @@
       </article>
     </section>
 
+    <section class="panel monitoring-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">SAFETY &amp; MONITORING</p><h2>Стан системи</h2></div>
+        <div class="export-actions"><a href="/api/export/trades.csv">Угоди CSV</a><a href="/api/export/events.csv">Події CSV</a></div>
+      </div>
+      <div class="monitoring-grid">
+        <div class="monitor-metric"><span>Market data</span><strong id="monitor-market">—</strong></div>
+        <div class="monitor-metric"><span>Остання ціна</span><strong id="monitor-last-price">—</strong></div>
+        <div class="monitor-metric"><span>Grid running / paused</span><strong id="monitor-grid">—</strong></div>
+        <div class="monitor-metric"><span>DCA running / paused</span><strong id="monitor-dca">—</strong></div>
+      </div>
+      <h3>Останні події</h3>
+      <div id="event-feed" class="event-feed"><p class="empty">Подій ще немає.</p></div>
+    </section>
+
     <section class="panel bots-panel">
       <div class="panel-head"><div><p class="eyebrow">AUTOMATION</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>

@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.9.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.10.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -40,6 +40,11 @@ Binance Spot trading manager with three execution modes:
 - Grid Optimizer comparing up to 30 parameter combinations on one candle dataset
 - Risk-adjusted optimizer ranking with a low-cycle confidence penalty
 - 70/30 walk-forward validation on a separate unseen candle period
+- Monitoring dashboard with market-data health, last success time and event feed
+- Per-Grid open exposure, unrealized P&L and total P&L
+- Pause/resume controls and automatic safety pause after three consecutive engine errors
+- CSV exports for PAPER trades and Grid/DCA events
+- Protection against stopping a Grid bot while paired SELL levels remain open
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -191,16 +196,33 @@ POST /api/backtest/grid/walk-forward
 GET  /api/dca/bots
 GET  /api/dca/bots/{bot_id}
 POST /api/dca/bots/start
+POST /api/dca/bots/{bot_id}/pause
+POST /api/dca/bots/{bot_id}/resume
 POST /api/dca/bots/{bot_id}/stop
 POST /api/dca/bots/{bot_id}/tick
 GET  /api/grid/bots
 GET  /api/grid/bots/{bot_id}
 POST /api/grid/bots/start
+POST /api/grid/bots/{bot_id}/pause
+POST /api/grid/bots/{bot_id}/resume
 POST /api/grid/bots/{bot_id}/stop
 POST /api/grid/bots/{bot_id}/tick
+GET  /api/monitoring/status
+GET  /api/export/trades.csv
+GET  /api/export/events.csv
 ```
 
 The `/tick` endpoint is only for debugging. Normal active grid bots are checked automatically by the background worker.
+
+## Monitoring and safety
+
+The dashboard shows market-data health, running/paused strategy counts and the
+20 latest Grid/DCA events. A bot is automatically changed to `PAUSED` after
+three consecutive engine errors and must be explicitly resumed. Pausing keeps
+open levels and positions intact. A Grid bot with open paired SELL levels cannot
+be stopped; pause it instead so its paper position is not silently orphaned.
+
+Trades and bot events can be downloaded as CSV from the dashboard.
 
 ## Tests
 

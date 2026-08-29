@@ -71,7 +71,10 @@ class SQLiteStore:
                     last_price REAL NOT NULL,
                     spent_quote REAL NOT NULL,
                     realized_pnl REAL NOT NULL,
-                    completed_cycles INTEGER NOT NULL
+                    completed_cycles INTEGER NOT NULL,
+                    last_success_at TEXT NOT NULL DEFAULT '',
+                    consecutive_errors INTEGER NOT NULL DEFAULT 0,
+                    paused_reason TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS grid_orders (
                     id TEXT PRIMARY KEY,
@@ -112,7 +115,10 @@ class SQLiteStore:
                     last_price REAL NOT NULL,
                     last_buy_price REAL NOT NULL,
                     spent_quote REAL NOT NULL,
-                    buy_count INTEGER NOT NULL
+                    buy_count INTEGER NOT NULL,
+                    last_success_at TEXT NOT NULL DEFAULT '',
+                    consecutive_errors INTEGER NOT NULL DEFAULT 0,
+                    paused_reason TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS dca_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,8 +134,20 @@ class SQLiteStore:
                 );
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 2 WHERE version < 2;
+                UPDATE schema_version SET version = 3 WHERE version < 3;
             """)
+            self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
+
+    @staticmethod
+    def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def load_portfolio(self, portfolio: "PaperPortfolio") -> bool:
         from app.paper.portfolio import Position, Trade
@@ -187,10 +205,11 @@ class SQLiteStore:
     def save_bot(self, bot: "GridBotState") -> None:
         with self.connect() as db:
             db.execute("""INSERT OR REPLACE INTO grid_bots VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.reference_price,
                 bot.budget_quote, bot.step_pct, bot.levels_each_side, bot.quote_per_level,
                 bot.created_at, bot.last_price, bot.spent_quote, bot.realized_pnl, bot.completed_cycles,
+                bot.last_success_at, bot.consecutive_errors, bot.paused_reason,
             ))
             db.execute("DELETE FROM grid_orders WHERE bot_id = ?", (bot.id,))
             db.executemany("INSERT INTO grid_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
@@ -236,10 +255,11 @@ class SQLiteStore:
     def save_dca_bot(self, bot) -> None:
         with self.connect() as db:
             db.execute("""INSERT OR REPLACE INTO dca_bots VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.budget_quote,
                 bot.order_quote, bot.interval_seconds, bot.dip_trigger_pct, bot.created_at,
                 bot.next_buy_at, bot.last_price, bot.last_buy_price, bot.spent_quote, bot.buy_count,
+                bot.last_success_at, bot.consecutive_errors, bot.paused_reason,
             ))
             db.execute("DELETE FROM dca_events WHERE bot_id = ?", (bot.id,))
             db.executemany("""INSERT INTO dca_events

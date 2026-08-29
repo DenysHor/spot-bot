@@ -34,6 +34,9 @@ class DcaBotState:
     last_buy_price: float = 0.0
     spent_quote: float = 0.0
     buy_count: int = 0
+    last_success_at: str = ""
+    consecutive_errors: int = 0
+    paused_reason: str = ""
     events: list[DcaEvent] = field(default_factory=list)
 
     def snapshot(self) -> dict:
@@ -110,6 +113,27 @@ class DcaExecutionEngine:
         self._persist(bot)
         return bot
 
+    def pause_bot(self, bot_id: str, reason: str = "Paused by user") -> DcaBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "RUNNING":
+            raise ValueError("Only a running DCA bot can be paused")
+        bot.status = "PAUSED"
+        bot.paused_reason = reason
+        bot.events.append(DcaEvent(self._iso(self._now()), "BOT_PAUSED", bot.last_price, message=reason))
+        self._persist(bot)
+        return bot
+
+    def resume_bot(self, bot_id: str) -> DcaBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "PAUSED":
+            raise ValueError("Only a paused DCA bot can be resumed")
+        bot.status = "RUNNING"
+        bot.paused_reason = ""
+        bot.consecutive_errors = 0
+        bot.events.append(DcaEvent(self._iso(self._now()), "BOT_RESUMED", bot.last_price))
+        self._persist(bot)
+        return bot
+
     def reset(self) -> None:
         self.bots = {}
         if self.store is not None:
@@ -125,6 +149,8 @@ class DcaExecutionEngine:
             raise ValueError("Market price must be positive")
         current_time = now or self._now()
         bot.last_price = current
+        bot.last_success_at = self._iso(current_time)
+        bot.consecutive_errors = 0
         scheduled = current_time >= datetime.fromisoformat(bot.next_buy_at)
         dip = bot.last_buy_price > 0 and current <= bot.last_buy_price * (1 - bot.dip_trigger_pct / 100)
         if not scheduled and not dip:
@@ -182,8 +208,14 @@ class DcaExecutionEngine:
             try:
                 await self.tick_bot(bot.id)
             except Exception as exc:
+                bot.consecutive_errors += 1
                 bot.events.append(DcaEvent(self._iso(self._now()), "ENGINE_ERROR", bot.last_price,
                                            message=str(exc)))
+                if bot.consecutive_errors >= 3:
+                    bot.status = "PAUSED"
+                    bot.paused_reason = "Auto-paused after 3 consecutive engine errors"
+                    bot.events.append(DcaEvent(self._iso(self._now()), "AUTO_PAUSED", bot.last_price,
+                                               message=bot.paused_reason))
                 self._persist(bot)
 
     async def run_forever(self) -> None:

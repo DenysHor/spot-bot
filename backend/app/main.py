@@ -1,9 +1,11 @@
+import csv
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from io import StringIO
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,6 +30,7 @@ portfolio = PaperPortfolio(
 broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
 backtester = GridBacktester(fee_rate=0.001)
+market_health = {"last_success_at": "", "last_error": ""}
 risk_manager = RiskManager(RiskLimits(
     max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
     max_position_pct=settings.max_position_pct,
@@ -36,8 +39,14 @@ risk_manager = RiskManager(RiskLimits(
 
 
 async def current_price(symbol: str) -> float:
-    data = await market.price(symbol.upper())
-    return float(data["price"])
+    try:
+        data = await market.price(symbol.upper())
+        market_health["last_success_at"] = PaperPortfolio.now_iso()
+        market_health["last_error"] = ""
+        return float(data["price"])
+    except Exception as exc:
+        market_health["last_error"] = str(exc)
+        raise
 
 
 grid_engine = GridExecutionEngine(
@@ -63,7 +72,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.10.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -135,7 +144,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.9.0",
+        "version": "0.10.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -145,11 +154,11 @@ async def health() -> dict:
 @app.get("/api/market/{symbol}")
 async def market_snapshot(symbol: str) -> dict:
     try:
-        price = await market.price(symbol)
+        price = await current_price(symbol)
         ticker = await market.ticker_24h(symbol)
         return {
             "symbol": symbol.upper(),
-            "price": float(price["price"]),
+            "price": price,
             "change_24h_pct": float(ticker["priceChangePercent"]),
             "volume_24h": float(ticker["volume"]),
             "quote_volume_24h": float(ticker["quoteVolume"]),
@@ -362,6 +371,22 @@ async def dca_stop(bot_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/dca/bots/{bot_id}/pause")
+async def dca_pause(bot_id: str) -> dict:
+    try:
+        return dca_engine.pause_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/dca/bots/{bot_id}/resume")
+async def dca_resume(bot_id: str) -> dict:
+    try:
+        return dca_engine.resume_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/dca/bots/{bot_id}/tick")
 async def dca_tick(bot_id: str) -> dict:
     try:
@@ -413,7 +438,23 @@ async def grid_stop(bot_id: str) -> dict:
     try:
         return grid_engine.stop_bot(bot_id).snapshot()
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/pause")
+async def grid_pause(bot_id: str) -> dict:
+    try:
+        return grid_engine.pause_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/resume")
+async def grid_resume(bot_id: str) -> dict:
+    try:
+        return grid_engine.resume_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/grid/bots/{bot_id}/tick")
@@ -426,3 +467,56 @@ async def grid_tick(bot_id: str) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid tick failed: {exc}") from exc
+
+
+@app.get("/api/monitoring/status")
+async def monitoring_status() -> dict:
+    grid_bots_state = list(grid_engine.bots.values())
+    dca_bots_state = list(dca_engine.bots.values())
+    return {
+        "market_data": {
+            "status": "ONLINE" if market_health["last_success_at"] and not market_health["last_error"] else "DEGRADED",
+            **market_health,
+        },
+        "grid": {
+            "running": sum(bot.status == "RUNNING" for bot in grid_bots_state),
+            "paused": sum(bot.status == "PAUSED" for bot in grid_bots_state),
+            "errors": sum(bot.consecutive_errors for bot in grid_bots_state),
+        },
+        "dca": {
+            "running": sum(bot.status == "RUNNING" for bot in dca_bots_state),
+            "paused": sum(bot.status == "PAUSED" for bot in dca_bots_state),
+            "errors": sum(bot.consecutive_errors for bot in dca_bots_state),
+        },
+    }
+
+
+def csv_response(filename: str, fieldnames: list[str], rows: list[dict]) -> StreamingResponse:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return StreamingResponse(
+        iter([output.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/trades.csv")
+async def export_trades() -> StreamingResponse:
+    fields = ["id", "timestamp", "symbol", "side", "price", "quantity", "quote_amount", "fee_quote", "realized_pnl"]
+    return csv_response("paper-trades.csv", fields, [asdict(trade) for trade in portfolio.trades])
+
+
+@app.get("/api/export/events.csv")
+async def export_events() -> StreamingResponse:
+    rows = []
+    for strategy, bots in (("GRID", grid_engine.bots.values()), ("DCA", dca_engine.bots.values())):
+        for bot in bots:
+            for event in bot.events:
+                row = asdict(event)
+                row.update({"strategy": strategy, "bot_id": bot.id, "symbol": bot.symbol})
+                rows.append(row)
+    rows.sort(key=lambda row: row["timestamp"])
+    fields = ["strategy", "bot_id", "symbol", "timestamp", "event", "price", "side", "quantity", "quote_amount", "realized_cycle_pnl", "message"]
+    return csv_response("bot-events.csv", fields, rows)
