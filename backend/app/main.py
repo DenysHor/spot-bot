@@ -79,7 +79,8 @@ dca_engine = DcaExecutionEngine(
 )
 notifier = TelegramNotifier(
     settings.telegram_bot_token, settings.telegram_chat_id, grid_engine, dca_engine,
-    poll_seconds=settings.notification_poll_seconds,
+    portfolio=portfolio, store=store, poll_seconds=settings.notification_poll_seconds,
+    daily_report_hour_utc=settings.daily_report_hour_utc,
 )
 
 
@@ -97,7 +98,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.11.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.13.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -210,7 +211,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.11.0",
+        "version": "0.13.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -562,8 +563,22 @@ async def monitoring_status() -> dict:
 async def notification_status() -> dict:
     return {
         "enabled": notifier.status.enabled,
+        "status": "ONLINE" if notifier.status.enabled and not notifier.status.last_error else "ERROR" if notifier.status.enabled else "DISABLED",
+        "last_success_at": notifier.status.last_success_at,
         "last_error": notifier.status.last_error,
+        "deliveries": store.list_notifications(limit=20),
     }
+
+
+@app.post("/api/notifications/test")
+async def notification_test() -> dict:
+    try:
+        await notifier.send_test()
+        return {"status": "sent"}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Telegram delivery failed: {exc}") from exc
 
 
 def csv_response(filename: str, fieldnames: list[str], rows: list[dict]) -> StreamingResponse:

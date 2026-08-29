@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.11.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.13.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -49,6 +49,7 @@ Binance Spot trading manager with three execution modes:
 - Docker deployment with a single execution worker and public health-check
 - Persistent SQLite volume support and retained startup backups
 - Optional Telegram alerts for fills, risk blocks, engine errors and automatic pauses
+- Persistent notification delivery log, dashboard test button and one daily PAPER summary
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -253,6 +254,7 @@ SESSION_SECRET=<random secret with at least 32 characters>
 SECURE_COOKIES=true
 TELEGRAM_BOT_TOKEN=<Telegram BotFather token, optional>
 TELEGRAM_CHAT_ID=<Telegram chat id, optional>
+DAILY_REPORT_HOUR_UTC=20
 ```
 
 Never commit the real password or session secret. In cloud mode the app refuses

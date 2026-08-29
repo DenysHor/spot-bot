@@ -149,9 +149,21 @@ class SQLiteStore:
                     message TEXT NOT NULL,
                     UNIQUE(bot_id, sequence)
                 );
+                CREATE TABLE IF NOT EXISTS notification_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS notification_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    error TEXT NOT NULL DEFAULT ''
+                );
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 3 WHERE version < 3;
+                UPDATE schema_version SET version = 4 WHERE version < 4;
             """)
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
@@ -290,3 +302,25 @@ class SQLiteStore:
     def clear_dca_bots(self) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM dca_bots")
+
+    def get_notification_state(self, key: str, default: str = "") -> str:
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM notification_state WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_notification_state(self, key: str, value: str) -> None:
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO notification_state(key, value) VALUES (?, ?)", (key, value))
+
+    def record_notification(self, kind: str, status: str, message: str, error: str = "") -> None:
+        with self.connect() as db:
+            db.execute("""INSERT INTO notification_log(timestamp, kind, status, message, error)
+                VALUES (?, ?, ?, ?, ?)""", (
+                datetime.now(timezone.utc).isoformat(), kind, status, message, error,
+            ))
+
+    def list_notifications(self, limit: int = 50) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM notification_log ORDER BY id DESC LIMIT ?", (limit,)
+            )]

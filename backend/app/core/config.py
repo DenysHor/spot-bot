@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     notification_poll_seconds: float = 2.0
+    daily_report_hour_utc: int = 20
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
