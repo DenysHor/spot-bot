@@ -15,6 +15,7 @@ from app.core.auth import SessionAuth, validate_cloud_security
 from app.dca.execution import DcaExecutionEngine
 from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
+from app.notifications.telegram import TelegramNotifier
 from app.paper.broker import PaperBroker
 from app.paper.portfolio import PaperPortfolio
 from app.persistence.sqlite import SQLiteStore
@@ -76,6 +77,10 @@ dca_engine = DcaExecutionEngine(
     broker=broker, price_provider=current_price, risk_manager=risk_manager,
     poll_seconds=settings.grid_poll_seconds, store=store,
 )
+notifier = TelegramNotifier(
+    settings.telegram_bot_token, settings.telegram_chat_id, grid_engine, dca_engine,
+    poll_seconds=settings.notification_poll_seconds,
+)
 
 
 @asynccontextmanager
@@ -85,7 +90,9 @@ async def lifespan(app: FastAPI):
     if settings.trading_mode == "PAPER":
         grid_engine.start_background()
         dca_engine.start_background()
+        notifier.start_background()
     yield
+    await notifier.stop_background()
     await grid_engine.stop_background()
     await dca_engine.stop_background()
 
@@ -548,6 +555,14 @@ async def monitoring_status() -> dict:
             "paused": sum(bot.status == "PAUSED" for bot in dca_bots_state),
             "errors": sum(bot.consecutive_errors for bot in dca_bots_state),
         },
+    }
+
+
+@app.get("/api/notifications/status")
+async def notification_status() -> dict:
+    return {
+        "enabled": notifier.status.enabled,
+        "last_error": notifier.status.last_error,
     }
 
 

@@ -48,6 +48,7 @@ Binance Spot trading manager with three execution modes:
 - Password-protected dashboard with signed HttpOnly session cookies
 - Docker deployment with a single execution worker and public health-check
 - Persistent SQLite volume support and retained startup backups
+- Optional Telegram alerts for fills, risk blocks, engine errors and automatic pauses
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 
@@ -250,6 +251,8 @@ DASHBOARD_USERNAME=admin
 DASHBOARD_PASSWORD=<unique password with at least 12 characters>
 SESSION_SECRET=<random secret with at least 32 characters>
 SECURE_COOKIES=true
+TELEGRAM_BOT_TOKEN=<Telegram BotFather token, optional>
+TELEGRAM_CHAT_ID=<Telegram chat id, optional>
 ```
 
 Never commit the real password or session secret. In cloud mode the app refuses
