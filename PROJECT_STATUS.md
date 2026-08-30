@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.19.0`
-Current implementation: historical Fixed Grid versus Trailing Up comparison
+Current version: `0.20.0`
+Current implementation: searchable Binance pairs and per-bot dashboard workspaces
 
 ## Non-negotiable safety rules
 
@@ -75,6 +75,10 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Dashboard shows anchor price, next recenter trigger, last recenter time, daily usage, and post-recenter results.
 - Comparison backtest runs Fixed Grid and Trailing Up on the same candles without changing PAPER state.
 - Historical level crossings fill at the configured grid price rather than a favorable candle extreme.
+- Binance pair search exposes only active Spot pairs quoted in the configured USDT quote asset.
+- Grid/DCA launch validates the selected pair against the cached Binance exchange catalog.
+- The overview shows aggregate allocated budget, bot shortcuts, state-derived recommendations, and portfolio metrics.
+- Each active Grid bot receives its own dynamic tab with filtered chart, state, events, analytics, readiness, and backtesting.
 
 ## Local setup on a new Windows computer
 
@@ -111,7 +115,7 @@ Preserve unrelated user changes. Use small commits, run the full test suite, and
 5. Verify `/health` reports the new version.
 6. Hard-refresh the dashboard and confirm Market data, Telegram, and the running bot state.
 
-## Current validation milestone: v0.19
+## Current validation milestone: v0.20
 
 The evidence-based PAPER readiness gate is implemented without changing trading parameters automatically:
 

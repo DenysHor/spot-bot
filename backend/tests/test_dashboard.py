@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 
 from app import main
@@ -29,9 +31,33 @@ def test_dashboard_and_static_assets_are_served():
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "Strategy readiness" in script.text
+    assert "/api/market/symbols/search" in script.text
+    assert "dashboard-tabs" in page.text
+    assert "symbol-options" in page.text
     assert "SOLUSDT" in page.text
     assert styles.status_code == 200
     assert "--green" in styles.text
+
+
+def test_symbol_search_returns_only_active_spot_usdt_pairs(monkeypatch):
+    async def fake_exchange_info():
+        return {"symbols": [
+            {"symbol": "LINKUSDT", "baseAsset": "LINK", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": True},
+            {"symbol": "LINKBUSD", "baseAsset": "LINK", "quoteAsset": "BUSD", "status": "TRADING", "isSpotTradingAllowed": True},
+            {"symbol": "OLDUSDT", "baseAsset": "OLD", "quoteAsset": "USDT", "status": "BREAK", "isSpotTradingAllowed": True},
+            {"symbol": "FUTUSDT", "baseAsset": "FUT", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": False},
+        ]}
+
+    monkeypatch.setattr(main.market, "exchange_info", fake_exchange_info)
+    main.symbol_catalog_cache.update({
+        "expires_at": datetime.min.replace(tzinfo=timezone.utc), "symbols": [],
+    })
+    response = TestClient(main.app).get("/api/market/symbols/search?query=link&limit=10")
+
+    assert response.status_code == 200
+    assert response.json()["symbols"] == [
+        {"symbol": "LINKUSDT", "base_asset": "LINK", "quote_asset": "USDT"}
+    ]
 
 
 def test_kline_endpoint_normalizes_binance_rows(monkeypatch):

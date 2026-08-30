@@ -26,7 +26,15 @@
   </header>
 
   <main>
-    <section class="metrics" aria-label="Portfolio summary">
+    <nav id="dashboard-tabs" class="dashboard-tabs"><button class="active" type="button">Огляд</button></nav>
+
+    <section id="overview-summary" class="panel overview-summary overview-only">
+      <div class="panel-head"><div><p class="eyebrow">PORTFOLIO OVERVIEW</p><h2>Активні Grid-боти</h2></div></div>
+      <div id="overview-budget" class="overview-budget"></div>
+      <div id="overview-bots" class="overview-bots"><p class="empty">Завантаження ботів…</p></div>
+    </section>
+
+    <section class="metrics overview-only" aria-label="Portfolio summary">
       <article><span>Загальний капітал</span><strong id="equity">—</strong></article>
       <article><span>Вільний USDT</span><strong id="quote-balance">—</strong></article>
       <article><span>Realized P&amp;L</span><strong id="realized-pnl">—</strong></article>
@@ -34,11 +42,10 @@
     </section>
 
     <section class="grid-layout">
-      <article class="panel chart-panel">
+      <article class="panel chart-panel detail-only">
         <div class="panel-head">
           <div><p class="eyebrow">MARKET</p><h2 id="chart-title">BTCUSDT</h2></div>
           <div class="chart-controls">
-            <select id="symbol"><option>BTCUSDT</option><option>ETHUSDT</option><option>BNBUSDT</option><option>SOLUSDT</option></select>
             <select id="interval"><option>15m</option><option selected>1h</option><option>4h</option><option>1d</option></select>
           </div>
         </div>
@@ -47,9 +54,10 @@
         <div class="legend"><span><i class="price-key"></i>Ціна</span><span><i class="buy-key"></i>BUY-рівень</span><span><i class="sell-key"></i>SELL-рівень</span></div>
       </article>
 
-      <article class="panel control-panel">
+      <article class="panel control-panel overview-only">
         <div class="panel-head"><div><p class="eyebrow">NEW BOT</p><h2>Запустити Grid</h2></div></div>
         <form id="start-form">
+          <label>Binance Spot USDT-пара<div class="symbol-search"><input id="symbol" list="symbol-options" value="BTCUSDT" autocomplete="off" aria-label="Пошук Binance USDT-пари" required><datalist id="symbol-options"><option value="BTCUSDT"><option value="ETHUSDT"><option value="BNBUSDT"><option value="SOLUSDT"></datalist><small id="symbol-search-status">Почніть вводити назву монети</small></div></label>
           <label>Бюджет, USDT<input id="budget" type="number" value="1000" min="10" step="10" required></label>
           <div class="split">
             <label>Крок, %<input id="step" type="number" value="1.5" min="0.1" max="25" step="0.1" required></label>
@@ -78,12 +86,12 @@
       <div id="event-feed" class="event-feed"><p class="empty">Подій ще немає.</p></div>
     </section>
 
-    <section class="panel bots-panel">
+    <section class="panel bots-panel detail-only">
       <div class="panel-head"><div><p class="eyebrow">AUTOMATION</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>
     </section>
 
-    <section class="panel dca-panel">
+    <section class="panel dca-panel overview-only">
       <div class="panel-head"><div><p class="eyebrow">SMART ACCUMULATION</p><h2>Smart DCA</h2></div></div>
       <div class="dca-layout">
         <form id="dca-form" class="dca-form">
@@ -97,7 +105,7 @@
       </div>
     </section>
 
-    <section class="panel analytics-panel">
+    <section class="panel analytics-panel detail-only">
       <div class="panel-head">
         <div><p class="eyebrow">PERFORMANCE</p><h2>Grid-аналітика</h2></div>
         <div class="period-switch"><button class="ghost active" data-days="7" type="button">7 днів</button><button class="ghost" data-days="30" type="button">30 днів</button></div>
@@ -108,7 +116,7 @@
       <div class="analytics-chart-wrap"><canvas id="analytics-chart"></canvas><div id="analytics-empty" class="hidden">Ще немає завершених циклів за період.</div></div>
     </section>
 
-    <section class="panel backtest-panel">
+    <section class="panel backtest-panel detail-only">
       <div class="panel-head"><div><p class="eyebrow">HISTORICAL TEST</p><h2>Backtest стратегії</h2></div></div>
       <form id="backtest-form" class="backtest-form">
         <label>Свічок<input id="bt-limit" type="number" value="500" min="2" max="1000"></label>

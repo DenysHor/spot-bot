@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.19.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.20.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -31,6 +31,9 @@ Binance Spot trading manager with three execution modes:
 - Dashboard anchor, next trigger, last recenter, daily usage, and post-recenter analytics
 - Fixed Grid versus Trailing Up comparison on one identical historical candle dataset
 - Level-crossing backtest fills that avoid unrealistically favorable candle-extreme execution
+- Searchable catalog of active Binance Spot USDT pairs with server-side launch validation
+- Portfolio overview plus dynamically generated per-Grid-bot dashboard tabs
+- Bot-specific chart, budget, levels, events, analytics, readiness, recommendations, and backtests
 - Per-grid realized cycle P&L and completed-cycle count
 - Configurable market polling interval (`GRID_POLL_SECONDS`, default 5 sec)
 - One running grid bot per symbol in v0.3 to prevent position conflicts

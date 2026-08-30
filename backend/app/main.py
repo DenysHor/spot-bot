@@ -3,7 +3,7 @@ import csv
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -44,6 +44,8 @@ broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
 backtester = GridBacktester(fee_rate=0.001)
 market_health = {"last_success_at": "", "last_error": ""}
+symbol_catalog_cache = {"expires_at": datetime.min.replace(tzinfo=timezone.utc), "symbols": []}
+symbol_catalog_lock = asyncio.Lock()
 logger = logging.getLogger(__name__)
 risk_manager = RiskManager(RiskLimits(
     max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
@@ -94,6 +96,33 @@ async def current_klines(symbol: str, interval: str, limit: int) -> list:
         raise
 
 
+async def active_quote_symbols() -> list[dict]:
+    now = datetime.now(timezone.utc)
+    if symbol_catalog_cache["symbols"] and now < symbol_catalog_cache["expires_at"]:
+        return symbol_catalog_cache["symbols"]
+    async with symbol_catalog_lock:
+        now = datetime.now(timezone.utc)
+        if symbol_catalog_cache["symbols"] and now < symbol_catalog_cache["expires_at"]:
+            return symbol_catalog_cache["symbols"]
+        data = await market.exchange_info()
+        symbols = sorted([
+            {"symbol": item["symbol"], "base_asset": item["baseAsset"], "quote_asset": item["quoteAsset"]}
+            for item in data.get("symbols", [])
+            if item.get("status") == "TRADING"
+            and item.get("quoteAsset") == settings.quote_asset
+            and item.get("isSpotTradingAllowed", True)
+        ], key=lambda item: item["symbol"])
+        symbol_catalog_cache.update({"symbols": symbols, "expires_at": now + timedelta(minutes=15)})
+        return symbols
+
+
+async def ensure_active_quote_symbol(symbol: str) -> str:
+    normalized = symbol.upper().strip()
+    if normalized not in {item["symbol"] for item in await active_quote_symbols()}:
+        raise ValueError(f"{normalized} is not an active Binance Spot {settings.quote_asset} pair")
+    return normalized
+
+
 grid_engine = GridExecutionEngine(
     broker=broker,
     price_provider=current_price,
@@ -126,7 +155,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.19.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.20.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -243,12 +272,33 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.19.0",
+        "version": "0.20.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
         "authentication_enabled": auth.enabled,
     }
+
+
+@app.get("/api/market/symbols/search")
+async def market_symbol_search(query: str = "", limit: int = 20) -> dict:
+    normalized = "".join(character for character in query.upper() if character.isalnum())[:20]
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
+    try:
+        symbols = await active_quote_symbols()
+        matches = [
+            item for item in symbols
+            if not normalized or normalized in item["symbol"] or normalized in item["base_asset"]
+        ]
+        matches.sort(key=lambda item: (
+            not item["base_asset"].startswith(normalized),
+            not item["symbol"].startswith(normalized),
+            item["symbol"],
+        ))
+        return {"query": normalized, "quote_asset": settings.quote_asset, "symbols": matches[:limit]}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Binance symbol catalog error: {exc}") from exc
 
 
 @app.get("/api/market/{symbol}")
@@ -466,7 +516,7 @@ async def dca_start(request: DcaStartRequest) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="DCA execution v0.7 is PAPER-only")
     try:
-        symbol = request.symbol.upper()
+        symbol = await ensure_active_quote_symbol(request.symbol)
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
         return dca_engine.start_bot(
@@ -533,7 +583,7 @@ async def grid_start(request: GridStartRequest) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="Grid execution v0.3 is PAPER-only")
     try:
-        symbol = request.symbol.upper()
+        symbol = await ensure_active_quote_symbol(request.symbol)
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
         bot = grid_engine.start_bot(
