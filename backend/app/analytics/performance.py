@@ -39,6 +39,22 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     positive_pnl = sum(max(0.0, event.realized_cycle_pnl) for event in cycle_events)
     negative_pnl = abs(sum(min(0.0, event.realized_cycle_pnl) for event in cycle_events))
     allocated_budget = max((bot.budget_quote for bot in evaluation_bots), default=0.0)
+    snapshots = [bot.snapshot() for bot in evaluation_bots if hasattr(bot, "snapshot")]
+    is_hybrid = any(snapshot.get("seed_position_pct", 0) > 0 for snapshot in snapshots)
+    strategy_profile = next((snapshot.get("strategy_profile") for snapshot in snapshots), "RANGE_GRID")
+    seed_position_pct = max((snapshot.get("seed_position_pct", 0.0) for snapshot in snapshots), default=0.0)
+    grid_budget = max((snapshot.get("grid_budget_quote", allocated_budget) for snapshot in snapshots), default=allocated_budget)
+    trend_budget = max((snapshot.get("seed_cost_quote", 0.0) for snapshot in snapshots), default=0.0)
+    grid_total_pnl = sum(snapshot.get("grid_pnl", 0.0) for snapshot in snapshots) if snapshots else realized
+    trend_pnl = sum(snapshot.get("trend_pnl", 0.0) for snapshot in snapshots)
+    hybrid_total_pnl = grid_total_pnl + trend_pnl
+    trend_events = [
+        event for bot in matching_bots for event in bot.events
+        if event.event in {"HYBRID_SEED_BOUGHT", "HYBRID_SEED_SOLD"}
+        and _parse(event.timestamp) >= start
+    ]
+    trend_fees = sum(event.quote_amount * 0.001 for event in trend_events)
+    grid_fees = max(0.0, fees - trend_fees)
     created_times = [
         _parse(bot.created_at) for bot in evaluation_bots
         if getattr(bot, "created_at", "")
@@ -95,6 +111,19 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
             "avg_cycle_pnl": realized / cycles if cycles else 0.0,
             "allocated_budget": allocated_budget,
             "grid_return_pct": realized / allocated_budget * 100 if allocated_budget else 0.0,
+            "strategy_profile": strategy_profile,
+            "is_hybrid": is_hybrid,
+            "seed_position_pct": seed_position_pct,
+            "grid_budget": grid_budget,
+            "trend_budget": trend_budget,
+            "grid_total_pnl": grid_total_pnl,
+            "trend_pnl": trend_pnl,
+            "hybrid_total_pnl": hybrid_total_pnl,
+            "grid_total_return_pct": grid_total_pnl / grid_budget * 100 if grid_budget else 0.0,
+            "trend_return_pct": trend_pnl / trend_budget * 100 if trend_budget else 0.0,
+            "hybrid_total_return_pct": hybrid_total_pnl / allocated_budget * 100 if allocated_budget else 0.0,
+            "grid_fees": grid_fees,
+            "trend_fees": trend_fees,
             "realized_max_drawdown": max_drawdown,
             "realized_max_drawdown_pct": max_drawdown / allocated_budget * 100 if allocated_budget else 0.0,
             "profit_factor": positive_pnl / negative_pnl if negative_pnl else None,

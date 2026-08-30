@@ -7,12 +7,13 @@ def strategy_readiness(performance: dict) -> dict:
     elapsed_days = performance.get("elapsed_hours", 0.0) / 24
     cycles = metrics["cycles"]
     data_progress = min(1.0, elapsed_days / MIN_DAYS) * 50 + min(1.0, cycles / MIN_CYCLES) * 50
-    gross_profit = metrics["realized_pnl"] + metrics["fees"]
+    evaluated_pnl = metrics.get("hybrid_total_pnl", metrics["realized_pnl"]) if metrics.get("is_hybrid") else metrics["realized_pnl"]
+    gross_profit = evaluated_pnl + metrics["fees"]
     fee_drag_pct = metrics["fees"] / gross_profit * 100 if gross_profit > 0 else 100.0
     profit_factor = metrics["profit_factor"]
     excess_return = performance.get("excess_return_pct")
     criteria = [
-        {"key": "net_pnl", "label": "Net P&L", "value": metrics["realized_pnl"], "target": "> 0 USDT", "passed": metrics["realized_pnl"] > 0},
+        {"key": "net_pnl", "label": "Hybrid Total P&L" if metrics.get("is_hybrid") else "Net P&L", "value": evaluated_pnl, "target": "> 0 USDT", "passed": evaluated_pnl > 0},
         {"key": "drawdown", "label": "Realized drawdown", "value": metrics["realized_max_drawdown_pct"], "target": "<= 5%", "passed": metrics["realized_max_drawdown_pct"] <= 5},
         {"key": "profit_factor", "label": "Profit factor", "value": profit_factor, "target": ">= 1.2", "passed": (profit_factor is None and metrics["profitable_cycles"] > 0) or (profit_factor is not None and profit_factor >= 1.2)},
         {"key": "win_rate", "label": "Win rate", "value": metrics["win_rate_pct"], "target": ">= 50%", "passed": metrics["win_rate_pct"] >= 50},

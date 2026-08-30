@@ -340,7 +340,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.30.3", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.31.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -465,7 +465,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.30.3",
+        "version": "0.31.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1021,7 +1021,12 @@ async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
         result["buy_hold_return_pct"] = None
         result["benchmark_from"] = None
     benchmark = result["buy_hold_return_pct"]
-    result["excess_return_pct"] = result["metrics"]["grid_return_pct"] - benchmark if benchmark is not None else None
+    compared_return = (
+        result["metrics"]["hybrid_total_return_pct"]
+        if result["metrics"]["is_hybrid"] else result["metrics"]["grid_return_pct"]
+    )
+    result["compared_return_pct"] = compared_return
+    result["excess_return_pct"] = compared_return - benchmark if benchmark is not None else None
     result["readiness"] = strategy_readiness(result)
     return result
 

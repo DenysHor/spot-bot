@@ -87,6 +87,32 @@ def test_trailing_metrics_measure_cycles_after_first_recenter():
     assert metrics["post_recenter_pnl"] == 0.6
 
 
+def test_hybrid_analytics_separates_grid_trend_returns_and_fees():
+    now = datetime(2026, 1, 8, 12, tzinfo=timezone.utc)
+    timestamp = (now - timedelta(hours=1)).isoformat()
+    trades = [Trade(1, timestamp, "ENSOUSDT", "BUY", 1.0, 100, 99.9, 0.1)]
+    bot = SimpleNamespace(
+        symbol="ENSOUSDT", status="RUNNING", budget_quote=1000.0,
+        created_at=timestamp,
+        events=[GridEvent(timestamp, "HYBRID_SEED_BOUGHT", 1.0, quote_amount=99.9)],
+        snapshot=lambda: {
+            "strategy_profile": "UPTREND_HYBRID_10", "seed_position_pct": 10.0,
+            "grid_budget_quote": 900.0, "seed_cost_quote": 100.0,
+            "grid_pnl": 2.0, "trend_pnl": 3.0,
+        },
+    )
+
+    metrics = grid_performance(trades, {"hybrid": bot}, 7, "ENSOUSDT", now)["metrics"]
+
+    assert metrics["is_hybrid"] is True
+    assert metrics["hybrid_total_pnl"] == 5.0
+    assert metrics["grid_total_return_pct"] == 2 / 900 * 100
+    assert metrics["trend_return_pct"] == 3.0
+    assert metrics["hybrid_total_return_pct"] == 0.5
+    assert round(metrics["trend_fees"], 4) == 0.0999
+    assert round(metrics["grid_fees"], 4) == 0.0001
+
+
 def test_grid_health_marks_bot_idle_after_48_hours():
     now = datetime(2026, 1, 10, 12, tzinfo=timezone.utc)
     bot = SimpleNamespace(
