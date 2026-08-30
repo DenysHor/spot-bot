@@ -65,6 +65,11 @@ class GridBotState:
     seed_quantity: float = 0.0
     seed_cost_quote: float = 0.0
     seed_realized_pnl: float = 0.0
+    buy_paused: bool = False
+    buy_paused_reason: str = ""
+    buy_paused_since: str = ""
+    buy_required_quote: float = 0.0
+    buy_available_quote: float = 0.0
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
@@ -85,6 +90,7 @@ class GridBotState:
         result["trend_pnl"] = self.seed_realized_pnl + result["seed_unrealized_pnl"]
         result["total_pnl"] = result["grid_pnl"] + result["trend_pnl"]
         result["grid_budget_quote"] = self.budget_quote * (1 - self.seed_position_pct / 100)
+        result["execution_status"] = "BUY_PAUSED" if self.buy_paused else self.status
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
         step = self.step_pct / 100.0
@@ -337,6 +343,53 @@ class GridExecutionEngine:
             requested_quote=requested_quote * (1 + self.broker.fee_rate),
         )
 
+    def _available_quote_for_bot(self, bot: GridBotState, current_price: float) -> float:
+        portfolio = self.broker.portfolio
+        reserve = 0.0
+        if self.risk_manager is not None:
+            snapshot = portfolio.snapshot({bot.base_asset: current_price})
+            reserve = snapshot["total_equity"] * self.risk_manager.limits.reserve_quote_pct / 100
+        reserved_by_others = 0.0
+        for other in self.bots.values():
+            if other.id == bot.id or other.status == "STOPPED":
+                continue
+            other_grid_budget = other.budget_quote * (1 - other.seed_position_pct / 100)
+            reserved_by_others += max(0.0, other_grid_budget - other.spent_quote)
+        return max(0.0, portfolio.quote_balance - reserve - reserved_by_others)
+
+    def _pause_buys(self, bot: GridBotState, required: float, available: float, reason: str) -> None:
+        bot.buy_required_quote = required
+        bot.buy_available_quote = available
+        if bot.buy_paused:
+            return
+        bot.buy_paused = True
+        bot.buy_paused_reason = reason
+        bot.buy_paused_since = self._now()
+        bot.events.append(GridEvent(
+            timestamp=bot.buy_paused_since, event="BUY_SIDE_PAUSED", price=bot.last_price,
+            quote_amount=required,
+            message=f"{reason}; required={required:.4f} USDT; available={available:.4f} USDT; SELL remains active",
+        ))
+
+    def _maybe_resume_buys(self, bot: GridBotState, current_price: float) -> None:
+        buy_orders = [order for order in bot.open_orders if order.side == "BUY"]
+        required = min(
+            (order.quote_amount * (1 + self.broker.fee_rate) for order in buy_orders),
+            default=0.0,
+        )
+        available = self._available_quote_for_bot(bot, current_price)
+        bot.buy_required_quote = required
+        bot.buy_available_quote = available
+        if bot.buy_paused and (required == 0 or available >= required * 1.1):
+            bot.buy_paused = False
+            bot.buy_paused_reason = ""
+            bot.buy_paused_since = ""
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="BUY_SIDE_RESUMED", price=current_price,
+                quote_amount=available,
+                message=f"BUY liquidity restored with 10% safety buffer; available={available:.4f} USDT",
+            ))
+
     async def tick_bot(
         self, bot_id: str, price: float | None = None, now: datetime | None = None
     ) -> GridBotState:
@@ -352,6 +405,7 @@ class GridExecutionEngine:
         bot.consecutive_errors = 0
 
         self._recenter_buys_up(bot, current, now)
+        self._maybe_resume_buys(bot, current)
 
         # Process BUYs from highest trigger downward, allowing gap moves to fill several levels.
         buys = sorted(
@@ -360,10 +414,16 @@ class GridExecutionEngine:
             reverse=True,
         )
         for order in buys:
+            if bot.buy_paused:
+                break
             total_cost = order.quote_amount * (1 + self.broker.fee_rate)
             grid_budget = bot.budget_quote * (1 - bot.seed_position_pct / 100)
             if bot.spent_quote + total_cost > grid_budget + 1e-9:
                 continue
+            available = self._available_quote_for_bot(bot, current)
+            if available + 1e-9 < total_cost:
+                self._pause_buys(bot, total_cost, available, "Insufficient unreserved USDT")
+                break
             decision = self._risk_decision(bot, order.quote_amount, current)
             if decision is not None and not decision.allowed:
                 bot.events.append(GridEvent(
@@ -375,6 +435,7 @@ class GridExecutionEngine:
             try:
                 trade = self.broker.market_buy(bot.symbol, bot.base_asset, current, order.quote_amount)
             except ValueError as exc:
+                self._pause_buys(bot, total_cost, self.broker.portfolio.quote_balance, str(exc))
                 bot.events.append(GridEvent(
                     timestamp=self._now(), event="BUY_BLOCKED", price=current,
                     side="BUY", quote_amount=order.quote_amount, message=str(exc),

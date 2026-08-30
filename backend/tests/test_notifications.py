@@ -70,6 +70,30 @@ def test_notifier_sends_trailing_recenter_event():
     assert "shifted 8 BUY levels" in sent[0]
 
 
+def test_notifier_sends_buy_side_pause_and_resume_events():
+    sent = []
+
+    async def sender(text):
+        sent.append(text)
+
+    bot = SimpleNamespace(id="bot1", symbol="SOLUSDT", events=[])
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={bot.id: bot}),
+        SimpleNamespace(bots={}), sender=sender,
+    )
+    notifier.seed_existing()
+    bot.events.extend([
+        GridEvent("later1", "BUY_SIDE_PAUSED", 90.0, message="SELL remains active"),
+        GridEvent("later2", "BUY_SIDE_RESUMED", 95.0, message="liquidity restored"),
+    ])
+
+    asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
+
+    assert len(sent) == 2
+    assert "BUY_SIDE_PAUSED" in sent[0]
+    assert "BUY_SIDE_RESUMED" in sent[1]
+
+
 def test_cursors_and_daily_report_survive_restart():
     sent = []
 

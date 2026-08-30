@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.31.1**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.32.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -51,6 +51,8 @@ Binance Spot trading manager with three execution modes:
 - Separate Grid P&L, trend P&L, allocation, and trend-position value on each bot card
 - Hybrid-aware analytics with total/Grid/trend returns, component P&L, split fees, and total Hybrid excess return versus Buy & Hold
 - Exact-start Buy & Hold benchmark based on the bot's actual entry price with matching entry and exit fees
+- BUY-only liquidity pause that preserves SELL execution, sends pause/recovery events, and automatically resumes with a 10% buffer
+- Per-bot unspent Grid-budget reservation and a 12-bot hard cap still governed by portfolio, pair, and USDT-reserve limits
 - 70/30 walk-forward profile validation that keeps training and validation periods separate
 - Smart DCA with scheduled purchases and extra dip-triggered purchases
 - RiskManager enforcement and SQLite recovery for every DCA bot and event

@@ -3,6 +3,7 @@ import asyncio
 from app.grid.execution import GridExecutionEngine
 from app.paper.broker import PaperBroker
 from app.paper.portfolio import PaperPortfolio
+from app.risk.manager import RiskLimits, RiskManager
 
 
 def test_grid_buy_sell_cycle_and_replacement_buy():
@@ -193,3 +194,34 @@ def test_trailing_up_stops_at_daily_recenter_limit():
     assert bot.reference_price == capped_anchor
     assert sum(event.event == "RECENTER_LIMIT_REACHED" for event in bot.events) == 1
     assert bot.snapshot()["next_recenter_price"] > capped_anchor
+
+
+def test_buy_side_pauses_for_low_unreserved_quote_while_sell_remains_active():
+    portfolio = PaperPortfolio(starting_quote=1_000.0, quote_asset="USDT")
+    broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    risk = RiskManager(RiskLimits(
+        max_portfolio_allocation_pct=100, max_position_pct=100, reserve_quote_pct=20,
+    ))
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price, risk_manager=risk)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 400.0, 10.0, 2)
+
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    assert any(order.side == "SELL" for order in bot.open_orders)
+    broker.market_buy("OTHERUSDT", "OTHER", 10.0, 500.0)
+
+    asyncio.run(engine.tick_bot(bot.id, price=80.0))
+    assert bot.buy_paused is True
+    assert bot.snapshot()["execution_status"] == "BUY_PAUSED"
+    assert any(event.event == "BUY_SIDE_PAUSED" for event in bot.events)
+
+    asyncio.run(engine.tick_bot(bot.id, price=100.0))
+    assert bot.completed_cycles == 1
+    assert bot.buy_paused is True
+
+    asyncio.run(engine.tick_bot(bot.id, price=100.0))
+    assert bot.buy_paused is False
+    assert any(event.event == "BUY_SIDE_RESUMED" for event in bot.events)

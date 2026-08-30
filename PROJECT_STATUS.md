@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.31.1`
+Current version: `0.32.0`
 Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules
@@ -79,6 +79,8 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Hybrid bots buy the selected trend allocation once, reserve the remainder for Grid levels, report both P&L components, and liquidate trend inventory safely when stopped.
 - Performance analytics evaluates Hybrid Total Return against Buy & Hold and separately reports Grid/Trend P&L, returns, budgets, and fees.
 - Fresh-bot Buy & Hold benchmarks use the exact Grid/Hybrid entry and latest bot price with identical round-trip fee assumptions instead of an hourly candle open.
+- Grid bots reserve their remaining declared Grid budget against other Grid bots. If unreserved USDT is insufficient, only BUY execution pauses; SELL processing remains active and BUY resumes automatically with a 10% liquidity buffer.
+- BUY-side pause/recovery is persisted, visible on bot cards, and emitted through the existing Telegram event channel. The default hard cap is 12 bots, while allocation and reserve limits remain authoritative.
 - Market-chart order labels are separated from the price scale and collision-adjusted; historical fills outside the visible candle window no longer distort the chart scale.
 - Historical level crossings fill at the configured grid price rather than a favorable candle extreme.
 - Binance pair search exposes only active Spot pairs quoted in the configured USDT quote asset.

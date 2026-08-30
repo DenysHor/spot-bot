@@ -209,6 +209,11 @@ class SQLiteStore:
             self._ensure_column(db, "grid_bots", "seed_quantity", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "seed_cost_quote", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "seed_realized_pnl", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "buy_paused", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "buy_paused_reason", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "grid_bots", "buy_paused_since", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "grid_bots", "buy_required_quote", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "buy_available_quote", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
@@ -266,6 +271,7 @@ class SQLiteStore:
             for row in db.execute("SELECT * FROM grid_bots ORDER BY created_at"):
                 values = dict(row)
                 values["trailing_up_enabled"] = bool(values["trailing_up_enabled"])
+                values["buy_paused"] = bool(values["buy_paused"])
                 bot = GridBotState(**values)
                 bot.open_orders = [GridOrder(**{k: v for k, v in dict(order).items() if k != "bot_id"})
                                    for order in db.execute("SELECT * FROM grid_orders WHERE bot_id = ?", (bot.id,))]
@@ -283,8 +289,9 @@ class SQLiteStore:
                  paused_reason, trailing_up_enabled, trailing_trigger_steps, recenter_count,
                  last_recenter_at, recenter_day, recenter_count_today, max_recenters_per_day,
                  recenter_limit_event_day, strategy_profile, seed_position_pct, seed_quantity,
-                 seed_cost_quote, seed_realized_pnl)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                 seed_cost_quote, seed_realized_pnl, buy_paused, buy_paused_reason,
+                 buy_paused_since, buy_required_quote, buy_available_quote)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.reference_price,
                 bot.budget_quote, bot.step_pct, bot.levels_each_side, bot.quote_per_level,
                 bot.created_at, bot.last_price, bot.spent_quote, bot.realized_pnl, bot.completed_cycles,
@@ -294,6 +301,8 @@ class SQLiteStore:
                 bot.max_recenters_per_day, bot.recenter_limit_event_day,
                 bot.strategy_profile, bot.seed_position_pct, bot.seed_quantity,
                 bot.seed_cost_quote, bot.seed_realized_pnl,
+                bot.buy_paused, bot.buy_paused_reason, bot.buy_paused_since,
+                bot.buy_required_quote, bot.buy_available_quote,
             ))
             db.execute("DELETE FROM grid_orders WHERE bot_id = ?", (bot.id,))
             db.executemany("INSERT INTO grid_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
