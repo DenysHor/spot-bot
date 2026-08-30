@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.analytics.scanner import analyze_symbol, is_scannable_base
+from app.persistence.sqlite import SQLiteStore
 
 
 def candles(start: float = 100.0) -> list[list]:
@@ -32,7 +33,7 @@ def test_symbol_analysis_produces_explainable_paper_observation():
     assert result["reasons"]
 
 
-def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch):
+def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch, tmp_path):
     async def fake_exchange_info():
         return {"symbols": [
             {"symbol": "LINKUSDT", "baseAsset": "LINK", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": True},
@@ -45,8 +46,8 @@ def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch):
         calls["tickers"] += 1
         assert symbol is None
         return [
-            {"symbol": "LINKUSDT", "priceChangePercent": "3", "quoteVolume": "25000000"},
-            {"symbol": "USDCUSDT", "priceChangePercent": "0", "quoteVolume": "50000000"},
+            {"symbol": "LINKUSDT", "lastPrice": "117.7", "priceChangePercent": "3", "quoteVolume": "25000000"},
+            {"symbol": "USDCUSDT", "lastPrice": "1", "priceChangePercent": "0", "quoteVolume": "50000000"},
         ]
 
     async def fake_klines(symbol, interval, limit):
@@ -56,6 +57,7 @@ def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch):
     monkeypatch.setattr(main.market, "exchange_info", fake_exchange_info)
     monkeypatch.setattr(main.market, "ticker_24h", fake_tickers)
     monkeypatch.setattr(main.market, "klines", fake_klines)
+    monkeypatch.setattr(main, "store", SQLiteStore(str(tmp_path / "scanner.db")))
     main.symbol_catalog_cache.update({"expires_at": datetime.min.replace(tzinfo=timezone.utc), "symbols": []})
     main.market_scanner_cache.update({"expires_at": datetime.min.replace(tzinfo=timezone.utc), "result": None})
     client = TestClient(main.app)
@@ -69,3 +71,26 @@ def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch):
     assert first.json()["items"][0]["volume_rank"] == 1
     assert second.status_code == 200
     assert calls["tickers"] == 1
+    assert client.get("/api/market/scanner/history").json()["observations"] == 1
+
+
+def test_signal_history_evaluates_24_hour_outcome(tmp_path):
+    store = SQLiteStore(str(tmp_path / "history.db"))
+    observed = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.record_market_signals(observed.isoformat(), [{
+        "symbol": "LINKUSDT", "signal": "PAPER_CANDIDATE", "score": 70,
+        "price": 100, "change_24h_pct": 2, "change_7d_pct": 5,
+        "rsi14": 60, "atr_pct": 2, "quote_volume_24h": 25_000_000,
+        "recommendation": "PAPER only",
+    }])
+
+    store.update_market_signal_outcomes(
+        {"LINKUSDT": 110}, datetime(2026, 1, 2, 1, tzinfo=timezone.utc),
+    )
+
+    history = store.market_signal_history()
+    quality = store.market_signal_quality()
+    assert round(history[0]["return_24h_pct"], 2) == 10
+    assert quality[0]["24h"]["evaluated"] == 1
+    assert quality[0]["24h"]["positive_rate_pct"] == 100
+    assert quality[0]["validated"] is False

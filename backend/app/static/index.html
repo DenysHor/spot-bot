@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.24.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.25.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -47,6 +47,10 @@
       <div id="scanner-summary" class="scanner-summary"><p class="empty">Відкрийте вкладку, щоб завантажити аналіз.</p></div>
       <div id="market-scanner" class="scanner-table"></div>
       <p class="form-note scanner-disclaimer">Сигнали призначені лише для відбору PAPER-кандидатів. Вони не гарантують зростання та не запускають угоди автоматично.</p>
+      <div class="signal-history-head"><div><p class="eyebrow">SIGNAL EVIDENCE</p><h2>Історія та якість сигналів</h2></div><span id="signal-history-summary" class="form-note">Накопичення спостережень…</span></div>
+      <div id="signal-quality" class="signal-quality"><p class="empty">Ще немає оцінених сигналів.</p></div>
+      <div id="signal-history" class="scanner-table signal-history"><p class="empty">Історія з’явиться після першого сканування.</p></div>
+      <p class="form-note scanner-disclaimer">Сигнал вважається перевіреним лише після 30 незалежних 7-денних результатів. До цього всі оцінки мають статус «збір даних».</p>
     </section>
 
     <section id="overview-summary" class="panel overview-summary overview-only">
@@ -169,6 +173,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.24.0"></script>
+  <script src="/static/app.js?v=0.25.0"></script>
 </body>
 </html>

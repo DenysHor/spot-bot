@@ -161,9 +161,37 @@ class SQLiteStore:
                     message TEXT NOT NULL,
                     error TEXT NOT NULL DEFAULT ''
                 );
+                CREATE TABLE IF NOT EXISTS market_signal_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    observed_at TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    signal TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    entry_price REAL NOT NULL,
+                    change_24h_pct REAL NOT NULL,
+                    change_7d_pct REAL NOT NULL,
+                    rsi14 REAL NOT NULL,
+                    atr_pct REAL NOT NULL,
+                    quote_volume_24h REAL NOT NULL,
+                    recommendation TEXT NOT NULL,
+                    max_price_seen REAL NOT NULL,
+                    min_price_seen REAL NOT NULL,
+                    price_24h REAL,
+                    return_24h_pct REAL,
+                    evaluated_24h_at TEXT,
+                    price_72h REAL,
+                    return_72h_pct REAL,
+                    evaluated_72h_at TEXT,
+                    price_7d REAL,
+                    return_7d_pct REAL,
+                    evaluated_7d_at TEXT,
+                    UNIQUE(observed_at, symbol)
+                );
+                CREATE INDEX IF NOT EXISTS idx_market_signals_symbol_time
+                    ON market_signal_observations(symbol, observed_at);
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 4 WHERE version < 4;
+                UPDATE schema_version SET version = 5 WHERE version < 5;
             """)
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
@@ -343,3 +371,73 @@ class SQLiteStore:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM notification_log ORDER BY id DESC LIMIT ?", (limit,)
             )]
+
+    def record_market_signals(self, observed_at: str, items: list[dict]) -> None:
+        with self.connect() as db:
+            db.executemany("""INSERT OR IGNORE INTO market_signal_observations
+                (observed_at, symbol, signal, score, entry_price, change_24h_pct,
+                 change_7d_pct, rsi14, atr_pct, quote_volume_24h, recommendation,
+                 max_price_seen, min_price_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
+                (
+                    observed_at, item["symbol"], item["signal"], item["score"], item["price"],
+                    item["change_24h_pct"], item["change_7d_pct"], item["rsi14"], item["atr_pct"],
+                    item["quote_volume_24h"], item["recommendation"], item["price"], item["price"],
+                )
+                for item in items
+            ])
+
+    def update_market_signal_outcomes(self, prices: dict[str, float], now: datetime) -> None:
+        with self.connect() as db:
+            rows = db.execute("""SELECT * FROM market_signal_observations
+                WHERE evaluated_7d_at IS NULL""").fetchall()
+            for row in rows:
+                price = prices.get(row["symbol"])
+                if not price or row["entry_price"] <= 0:
+                    continue
+                observed = datetime.fromisoformat(row["observed_at"].replace("Z", "+00:00"))
+                age_hours = (now - observed).total_seconds() / 3600
+                updates = {}
+                if price > row["max_price_seen"]:
+                    updates["max_price_seen"] = price
+                if price < row["min_price_seen"]:
+                    updates["min_price_seen"] = price
+                for label, hours in (("24h", 24), ("72h", 72), ("7d", 168)):
+                    if age_hours >= hours and row[f"evaluated_{label}_at"] is None:
+                        updates[f"price_{label}"] = price
+                        updates[f"return_{label}_pct"] = (price / row["entry_price"] - 1) * 100
+                        updates[f"evaluated_{label}_at"] = now.isoformat()
+                if updates:
+                    assignments = ", ".join(f"{column} = ?" for column in updates)
+                    db.execute(
+                        f"UPDATE market_signal_observations SET {assignments} WHERE id = ?",
+                        (*updates.values(), row["id"]),
+                    )
+
+    def market_signal_history(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute("""SELECT * FROM market_signal_observations
+                ORDER BY observed_at DESC, score DESC LIMIT ?""", (limit,)).fetchall()
+            return [{
+                **dict(row),
+                "max_rise_pct": (row["max_price_seen"] / row["entry_price"] - 1) * 100,
+                "max_drop_pct": (row["min_price_seen"] / row["entry_price"] - 1) * 100,
+            } for row in rows]
+
+    def market_signal_quality(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM market_signal_observations").fetchall()
+        result = []
+        for signal in sorted({row["signal"] for row in rows}):
+            matching = [row for row in rows if row["signal"] == signal]
+            item = {"signal": signal, "observations": len(matching)}
+            for label in ("24h", "72h", "7d"):
+                values = [row[f"return_{label}_pct"] for row in matching if row[f"return_{label}_pct"] is not None]
+                item[label] = {
+                    "evaluated": len(values),
+                    "positive_rate_pct": sum(value > 0 for value in values) / len(values) * 100 if values else None,
+                    "average_return_pct": sum(values) / len(values) if values else None,
+                }
+            item["validated"] = item["7d"]["evaluated"] >= 30
+            result.append(item)
+        return result

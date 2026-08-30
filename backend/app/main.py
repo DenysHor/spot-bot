@@ -162,6 +162,10 @@ async def scan_top_quote_pairs() -> dict:
         analyzed.sort(key=lambda item: (item["score"], item["quote_volume_24h"]), reverse=True)
         for rank, item in enumerate(analyzed, start=1):
             item["scanner_rank"] = rank
+        prices = {ticker["symbol"]: float(ticker["lastPrice"]) for ticker in liquid if ticker.get("lastPrice")}
+        store.update_market_signal_outcomes(prices, now)
+        observation_bucket = now.replace(minute=0, second=0, microsecond=0).isoformat()
+        store.record_market_signals(observation_bucket, analyzed)
         result = {
             "generated_at": now.isoformat(), "refresh_after_seconds": 900,
             "universe": "Top 50 active Binance Spot USDT pairs by 24h quote volume",
@@ -276,23 +280,42 @@ notifier = TelegramNotifier(
     portfolio=portfolio, store=store, poll_seconds=settings.notification_poll_seconds,
     daily_report_hour_utc=settings.daily_report_hour_utc,
 )
+market_scanner_task: asyncio.Task | None = None
+
+
+async def market_scanner_forever() -> None:
+    while True:
+        try:
+            await scan_top_quote_pairs()
+        except Exception as exc:
+            logger.warning("Background market scanner failed: %s", describe_exception(exc))
+        await asyncio.sleep(60)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global market_scanner_task
     validate_cloud_security(settings.secure_cookies, settings.dashboard_password, settings.session_secret)
     app.state.last_backup = store.create_backup(settings.sqlite_backup_count)
     if settings.trading_mode == "PAPER":
         grid_engine.start_background()
         dca_engine.start_background()
         notifier.start_background()
+        market_scanner_task = asyncio.create_task(market_scanner_forever())
     yield
+    if market_scanner_task and not market_scanner_task.done():
+        market_scanner_task.cancel()
+        try:
+            await market_scanner_task
+        except asyncio.CancelledError:
+            pass
+    market_scanner_task = None
     await notifier.stop_background()
     await grid_engine.stop_background()
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.24.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.25.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -413,7 +436,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.24.0",
+        "version": "0.25.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -448,6 +471,20 @@ async def market_scanner() -> dict:
         return await scan_top_quote_pairs()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Binance market scanner error: {exc}") from exc
+
+
+@app.get("/api/market/scanner/history")
+async def market_scanner_history(limit: int = 100) -> dict:
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    history = store.market_signal_history(limit)
+    quality = store.market_signal_quality()
+    return {
+        "history": history, "quality": quality,
+        "observations": sum(item["observations"] for item in quality),
+        "validated_signals": sum(item["validated"] for item in quality),
+        "validation_rule": "At least 30 evaluated 7-day observations per signal",
+    }
 
 
 @app.get("/api/market/{symbol}")
