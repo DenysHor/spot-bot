@@ -326,7 +326,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.27.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.28.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -448,7 +448,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.27.0",
+        "version": "0.28.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -650,6 +650,24 @@ async def grid_compare_trailing(request: GridBacktestRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid comparison failed: {exc}") from exc
+
+
+@app.post("/api/backtest/grid/compare-profiles")
+async def grid_compare_profiles(request: GridBacktestRequest) -> dict:
+    """Compare strategy profiles and validate the training winner on unseen candles."""
+    try:
+        symbol = request.symbol.upper()
+        base_asset = base_asset_from_symbol(symbol)
+        candles = await current_klines(symbol, interval=request.interval, limit=request.limit)
+        return await backtester.compare_profiles(
+            symbol=symbol, base_asset=base_asset, raw_candles=candles,
+            budget_quote=request.budget_quote, step_pct=request.step_pct,
+            levels_each_side=request.levels_each_side, training_pct=70,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Profile comparison failed: {exc}") from exc
 
 
 @app.post("/api/backtest/grid/optimize")

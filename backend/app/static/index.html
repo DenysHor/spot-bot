@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.27.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.28.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -163,16 +163,18 @@
         <div><h2>Grid Optimizer</h2><p class="form-note">Порівнює 15 комбінацій на тих самих свічках.</p></div>
         <div class="optimizer-actions">
           <button class="ghost" id="compare-trailing-button" type="button">Fixed vs Trailing</button>
+          <button class="ghost" id="compare-profiles-button" type="button">Порівняти профілі</button>
           <button class="ghost" id="walk-forward-button" type="button">Walk-forward 70/30</button>
           <button id="optimize-button" type="button">Знайти найкращі параметри</button>
         </div>
       </div>
       <div id="optimizer-result" class="optimizer-result hidden"></div>
       <div id="compare-trailing-result" class="walk-forward-result hidden"></div>
+      <div id="compare-profiles-result" class="optimizer-result hidden"></div>
       <div id="walk-forward-result" class="walk-forward-result hidden"></div>
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.27.0"></script>
+  <script src="/static/app.js?v=0.28.0"></script>
 </body>
 </html>

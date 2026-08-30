@@ -90,6 +90,7 @@ class GridBacktester:
         step_pct: float,
         levels_each_side: int,
         trailing_up_enabled: bool = False,
+        seed_position_pct: float = 0.0,
     ) -> dict:
         candles = [Candle.from_binance(row) for row in raw_candles]
         if len(candles) < 2:
@@ -99,6 +100,15 @@ class GridBacktester:
 
         portfolio = PaperPortfolio(starting_quote=budget_quote)
         broker = PaperBroker(portfolio, fee_rate=self.fee_rate)
+        if seed_position_pct < 0 or seed_position_pct > 50:
+            raise ValueError("seed_position_pct must be between 0 and 50")
+        seed_total = budget_quote * seed_position_pct / 100
+        if seed_total:
+            broker.market_buy(
+                symbol, base_asset, candles[0].close,
+                seed_total / (1 + self.fee_rate),
+            )
+        grid_budget = budget_quote - seed_total
 
         async def unused_price_provider(_: str) -> float:
             return candles[-1].close
@@ -108,7 +118,7 @@ class GridBacktester:
             symbol=symbol,
             base_asset=base_asset,
             reference_price=candles[0].close,
-            budget_quote=budget_quote,
+            budget_quote=grid_budget,
             step_pct=step_pct,
             levels_each_side=levels_each_side,
             trailing_up_enabled=trailing_up_enabled,
@@ -150,6 +160,8 @@ class GridBacktester:
                 "intrabar_path": ("O-L-H-C for bullish / O-H-L-C for bearish; "
                                   "fills occur at crossed grid levels, not candle extremes"),
                 "trailing_up_enabled": trailing_up_enabled,
+                "seed_position_pct": seed_position_pct,
+                "grid_budget_quote": grid_budget,
             },
             "performance": {
                 "starting_equity": budget_quote,
@@ -169,6 +181,81 @@ class GridBacktester:
             "trades": portfolio.trade_history(),
             "grid_events": [asdict(event) for event in bot.events],
             "equity_curve": equity_curve,
+        }
+
+    def buy_and_hold(self, raw_candles: list[list[Any]], budget_quote: float) -> dict:
+        candles = [Candle.from_binance(row) for row in raw_candles]
+        if len(candles) < 2:
+            raise ValueError("At least two candles are required")
+        first = candles[0].close
+        quantity = (budget_quote / (1 + self.fee_rate)) / first
+        peak = budget_quote
+        max_drawdown = 0.0
+        for candle in candles[1:]:
+            for price in candle.price_path():
+                equity = quantity * price
+                peak = max(peak, equity)
+                max_drawdown = max(max_drawdown, (peak - equity) / peak * 100 if peak else 0.0)
+        ending = quantity * candles[-1].close
+        return {
+            "starting_equity": budget_quote, "ending_equity": ending,
+            "net_profit": ending - budget_quote, "return_pct": (ending / budget_quote - 1) * 100,
+            "realized_pnl": 0.0, "unrealized_pnl": ending - budget_quote,
+            "fees_paid": budget_quote - budget_quote / (1 + self.fee_rate),
+            "max_drawdown_pct": max_drawdown, "buy_hold_return_pct": (candles[-1].close / first - 1) * 100,
+            "completed_cycles": 0, "trade_count": 1, "recenter_count": 0,
+        }
+
+    async def compare_profiles(
+        self, symbol: str, base_asset: str, raw_candles: list[list[Any]],
+        budget_quote: float, step_pct: float, levels_each_side: int,
+        training_pct: float = 70.0,
+    ) -> dict:
+        if len(raw_candles) < 10:
+            raise ValueError("Profile comparison requires at least 10 candles")
+        profiles = {
+            "RANGE_GRID": {"trailing_up_enabled": False, "seed_position_pct": 0.0},
+            "TRAILING_GRID": {"trailing_up_enabled": True, "seed_position_pct": 0.0},
+            "UPTREND_HYBRID_20": {"trailing_up_enabled": True, "seed_position_pct": 20.0},
+        }
+
+        async def evaluate(rows: list[list[Any]]) -> dict:
+            results = {}
+            for name, configuration in profiles.items():
+                report = await self.run(
+                    symbol=symbol, base_asset=base_asset, raw_candles=rows,
+                    budget_quote=budget_quote, step_pct=step_pct,
+                    levels_each_side=levels_each_side, **configuration,
+                )
+                results[name] = report["performance"]
+            results["BUY_AND_HOLD"] = self.buy_and_hold(rows, budget_quote)
+            for performance in results.values():
+                performance["risk_adjusted_score"] = (
+                    performance["return_pct"] / (1 + performance["max_drawdown_pct"])
+                )
+            return results
+
+        overall = await evaluate(raw_candles)
+        split = int(len(raw_candles) * training_pct / 100)
+        training_rows = raw_candles[:split]
+        validation_rows = raw_candles[split - 1:]
+        training = await evaluate(training_rows)
+        selected = max(training, key=lambda name: training[name]["risk_adjusted_score"])
+        validation = await evaluate(validation_rows)
+        ranking = sorted(overall, key=lambda name: overall[name]["risk_adjusted_score"], reverse=True)
+        return {
+            "symbol": symbol.upper(), "training_pct": training_pct,
+            "profiles": overall, "ranking": ranking,
+            "historical_winner": ranking[0],
+            "walk_forward": {
+                "selected_on_training": selected,
+                "training_performance": training[selected],
+                "validation_performance": validation[selected],
+                "validation_passed": validation[selected]["return_pct"] > 0,
+                "training_candles": len(training_rows),
+                "validation_candles": len(validation_rows),
+            },
+            "warning": "Historical and walk-forward PAPER simulations are not forecasts.",
         }
 
     async def compare_trailing(

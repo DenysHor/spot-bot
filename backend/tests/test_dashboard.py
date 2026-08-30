@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.27.0" in page.text
-    assert "/static/app.js?v=0.27.0" in page.text
+    assert "/static/styles.css?v=0.28.0" in page.text
+    assert "/static/app.js?v=0.28.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -32,6 +32,9 @@ def test_dashboard_and_static_assets_are_served():
     assert "monitor-telegram" in page.text
     assert "/api/notifications/test" in script.text
     assert "/api/backtest/grid/compare-trailing" in script.text
+    assert "/api/backtest/grid/compare-profiles" in script.text
+    assert "compare-profiles-button" in page.text
+    assert "UPTREND_HYBRID_20" in script.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "Strategy readiness" in script.text

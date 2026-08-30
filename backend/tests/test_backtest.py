@@ -100,3 +100,26 @@ def test_compare_trailing_uses_identical_period_and_reports_deltas():
     expected_delta = result["trailing"]["return_pct"] - result["fixed"]["return_pct"]
     assert result["difference"]["return_pct_points"] == expected_delta
     assert "does not change" in result["warning"]
+
+
+def test_compare_profiles_includes_hybrid_and_walk_forward_validation():
+    candles = [
+        kline(60_000 * i, 100 + i, 102 + i, 99 + i, 101 + i)
+        for i in range(20)
+    ]
+
+    result = asyncio.run(GridBacktester().compare_profiles(
+        symbol="BTCUSDT", base_asset="BTC", raw_candles=candles,
+        budget_quote=1_000, step_pct=1, levels_each_side=4,
+    ))
+
+    assert set(result["profiles"]) == {
+        "RANGE_GRID", "TRAILING_GRID", "UPTREND_HYBRID_20", "BUY_AND_HOLD",
+    }
+    assert len(result["ranking"]) == 4
+    assert result["historical_winner"] == result["ranking"][0]
+    assert result["profiles"]["UPTREND_HYBRID_20"]["trade_count"] >= 1
+    walk_forward = result["walk_forward"]
+    assert walk_forward["selected_on_training"] in result["profiles"]
+    assert walk_forward["training_candles"] == 14
+    assert walk_forward["validation_candles"] == 7

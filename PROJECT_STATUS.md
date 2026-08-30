@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.27.0`
+Current version: `0.28.0`
 Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules
@@ -74,6 +74,8 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Telegram reports every recenter and the first daily limit event.
 - Dashboard shows anchor price, next recenter trigger, last recenter time, daily usage, and post-recenter results.
 - Comparison backtest runs Fixed Grid and Trailing Up on the same candles without changing PAPER state.
+- Profile comparison ranks Range, Trailing, 20% trend hybrid, and Buy & Hold, then validates the training winner on the final 30% of candles.
+- Market-chart order labels are separated from the price scale and collision-adjusted; historical fills outside the visible candle window no longer distort the chart scale.
 - Historical level crossings fill at the configured grid price rather than a favorable candle extreme.
 - Binance pair search exposes only active Spot pairs quoted in the configured USDT quote asset.
 - Grid/DCA launch validates the selected pair against the cached Binance exchange catalog.
