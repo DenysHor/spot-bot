@@ -1,10 +1,12 @@
 import asyncio
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 from uuid import uuid4
 
 from app.paper.broker import PaperBroker
+from app.core.errors import describe_exception
 from app.risk.manager import RiskManager
 
 
@@ -46,6 +48,7 @@ class DcaBotState:
 
 
 PriceProvider = Callable[[str], Awaitable[float]]
+logger = logging.getLogger(__name__)
 
 
 class DcaExecutionEngine:
@@ -208,9 +211,11 @@ class DcaExecutionEngine:
             try:
                 await self.tick_bot(bot.id)
             except Exception as exc:
+                detail = describe_exception(exc)
+                logger.exception("DCA engine error for bot %s (%s): %s", bot.id, bot.symbol, detail)
                 bot.consecutive_errors += 1
                 bot.events.append(DcaEvent(self._iso(self._now()), "ENGINE_ERROR", bot.last_price,
-                                           message=str(exc)))
+                                           message=detail))
                 if bot.consecutive_errors >= 3:
                     bot.status = "PAUSED"
                     bot.paused_reason = "Auto-paused after 3 consecutive engine errors"

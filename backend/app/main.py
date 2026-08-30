@@ -1,10 +1,13 @@
+import asyncio
 import csv
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +17,7 @@ from app.backtest.grid import GridBacktester
 from app.analytics.performance import grid_performance
 from app.core.config import settings
 from app.core.auth import SessionAuth, validate_cloud_security
+from app.core.errors import describe_exception
 from app.dca.execution import DcaExecutionEngine
 from app.exchange.binance_public import BinancePublicClient
 from app.grid.execution import GridExecutionEngine
@@ -39,6 +43,7 @@ broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
 grid = SmartGrid()
 backtester = GridBacktester(fee_rate=0.001)
 market_health = {"last_success_at": "", "last_error": ""}
+logger = logging.getLogger(__name__)
 risk_manager = RiskManager(RiskLimits(
     max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
     max_position_pct=settings.max_position_pct,
@@ -47,14 +52,34 @@ risk_manager = RiskManager(RiskLimits(
 
 
 async def current_price(symbol: str) -> float:
-    try:
-        data = await market.price(symbol.upper())
-        market_health["last_success_at"] = PaperPortfolio.now_iso()
-        market_health["last_error"] = ""
-        return float(data["price"])
-    except Exception as exc:
-        market_health["last_error"] = str(exc)
-        raise
+    attempts = max(1, settings.market_retry_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            data = await market.price(symbol.upper())
+            market_health["last_success_at"] = PaperPortfolio.now_iso()
+            market_health["last_error"] = ""
+            if attempt > 1:
+                logger.info("Binance price recovered for %s on attempt %s", symbol.upper(), attempt)
+            return float(data["price"])
+        except Exception as exc:
+            detail = describe_exception(exc)
+            retryable = isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)) or (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code in {429, 500, 502, 503, 504}
+            )
+            if retryable and attempt < attempts:
+                delay = max(0.0, settings.market_retry_backoff_seconds) * attempt
+                logger.warning(
+                    "Transient Binance price error for %s (attempt %s/%s): %s",
+                    symbol.upper(), attempt, attempts, detail,
+                )
+                await asyncio.sleep(delay)
+                continue
+            message = f"Binance price request failed after {attempt} attempt(s): {detail}"
+            market_health["last_error"] = message
+            logger.exception("%s", message)
+            raise RuntimeError(message) from exc
+    raise RuntimeError("Unreachable market retry state")
 
 
 async def current_klines(symbol: str, interval: str, limit: int) -> list:
@@ -64,7 +89,7 @@ async def current_klines(symbol: str, interval: str, limit: int) -> list:
         market_health["last_error"] = ""
         return rows
     except Exception as exc:
-        market_health["last_error"] = str(exc)
+        market_health["last_error"] = describe_exception(exc)
         raise
 
 
@@ -100,7 +125,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.15.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.15.1", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -213,7 +238,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.15.0",
+        "version": "0.15.1",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",

@@ -75,6 +75,7 @@ def test_grid_auto_pauses_after_three_engine_errors():
     assert bot.status == "PAUSED"
     assert bot.consecutive_errors == 3
     assert bot.events[-1].event == "AUTO_PAUSED"
+    assert bot.events[-2].message == "RuntimeError: market unavailable"
     engine.resume_bot(bot.id)
     assert bot.status == "RUNNING"
     assert bot.consecutive_errors == 0

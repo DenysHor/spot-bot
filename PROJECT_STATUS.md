@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.15.0`  
-Last implementation commit: `9dfbfca Add start-aligned risk adjusted analytics`
+Current version: `0.15.1`
+Current implementation: typed Binance market retries and Railway engine error logging
 
 ## Non-negotiable safety rules
 
@@ -61,6 +61,8 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Persistent notification delivery log and deduplication across restarts.
 - Actual 7/30-day Grid analytics.
 - Start-aligned Buy & Hold benchmark, Grid return, excess return, realized drawdown, profit factor, fees, volume, cycles, and active time.
+- Three-attempt retry for transient Binance price timeouts before recording an engine error.
+- Typed exception details in SQLite events, Telegram alerts, and Railway logs.
 
 ## Local setup on a new Windows computer
 
