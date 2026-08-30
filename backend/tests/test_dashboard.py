@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.38.0" in page.text
-    assert "/static/app.js?v=0.38.0" in page.text
+    assert "/static/styles.css?v=0.39.0" in page.text
+    assert "/static/app.js?v=0.39.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -44,7 +44,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "B — купівля" in page.text
     assert "Зелена/червона свічка — рух ціни" in page.text
     assert "`${shortSide} ${priceNum(o.trigger_price" in script.text
-    assert "labelX=w-right+(w<600?22:42)" in script.text
+    assert "labelX=w-right+(w<600?10:42)" in script.text
     assert 'id="step" type="number" value="1.5" min="0.1" max="25" step="0.01"' in page.text
     assert "Загальна дохідність" in script.text
     assert "Комісії сітки" in script.text
@@ -69,10 +69,13 @@ def test_dashboard_and_static_assets_are_served():
     assert "Зарезервовано на купівлі" in script.text
     assert "localizeEventFeed" in script.text
     assert "priceNum" in script.text
-    assert "right=w<600?92:155" in script.text
+    assert "right=w<600?72:155" in script.text
     assert "mobile-bottom-nav" in page.text
     assert "mobile-bot-select" in script.text
     assert "Детальніше" in script.text
+    assert "chart-history-nav" in page.text
+    assert "shiftChart" in script.text
+    assert "limit=300" in script.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
     assert "/api/analytics/portfolio-comparison" in script.text
