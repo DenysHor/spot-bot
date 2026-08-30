@@ -183,7 +183,9 @@ class GridExecutionEngine:
         self._persist(bot)
         return bot
 
-    def _recenter_buys_up(self, bot: GridBotState, current: float) -> None:
+    def _recenter_buys_up(
+        self, bot: GridBotState, current: float, now: datetime | None = None
+    ) -> None:
         """Move only unfilled BUY levels up; never touch acquired inventory or SELLs."""
         if not bot.trailing_up_enabled:
             return
@@ -191,7 +193,8 @@ class GridExecutionEngine:
         trigger = bot.reference_price * (1 + step * bot.trailing_trigger_steps)
         if current < trigger:
             return
-        today = datetime.now(timezone.utc).date().isoformat()
+        current_time = now or datetime.now(timezone.utc)
+        today = current_time.date().isoformat()
         if bot.recenter_day != today:
             bot.recenter_day = today
             bot.recenter_count_today = 0
@@ -200,7 +203,7 @@ class GridExecutionEngine:
             if bot.recenter_limit_event_day != today:
                 bot.recenter_limit_event_day = today
                 bot.events.append(GridEvent(
-                    timestamp=self._now(), event="RECENTER_LIMIT_REACHED", price=current,
+                    timestamp=current_time.isoformat(), event="RECENTER_LIMIT_REACHED", price=current,
                     message=f"Daily Trailing Up limit reached: {bot.max_recenters_per_day}",
                 ))
             return
@@ -219,7 +222,7 @@ class GridExecutionEngine:
         bot.reference_price = current
         bot.recenter_count += 1
         bot.recenter_count_today += 1
-        bot.last_recenter_at = self._now()
+        bot.last_recenter_at = current_time.isoformat()
         bot.events.append(GridEvent(
             timestamp=bot.last_recenter_at, event="GRID_RECENTERED", price=current,
             message=(f"Trailing Up shifted {target_buy_count} BUY levels from anchor "
@@ -289,7 +292,9 @@ class GridExecutionEngine:
             requested_quote=requested_quote * (1 + self.broker.fee_rate),
         )
 
-    async def tick_bot(self, bot_id: str, price: float | None = None) -> GridBotState:
+    async def tick_bot(
+        self, bot_id: str, price: float | None = None, now: datetime | None = None
+    ) -> GridBotState:
         bot = self.get_bot(bot_id)
         if bot.status != "RUNNING":
             return bot
@@ -301,7 +306,7 @@ class GridExecutionEngine:
         bot.last_success_at = self._now()
         bot.consecutive_errors = 0
 
-        self._recenter_buys_up(bot, current)
+        self._recenter_buys_up(bot, current, now)
 
         # Process BUYs from highest trigger downward, allowing gap moves to fill several levels.
         buys = sorted(

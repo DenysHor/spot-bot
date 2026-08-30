@@ -51,6 +51,36 @@ class GridBacktester:
     def _iso(timestamp_ms: int) -> str:
         return datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc).isoformat()
 
+    @staticmethod
+    async def _tick_segment(engine, bot, start: float, target: float, when: datetime) -> None:
+        """Walk through crossed levels so OHLC extremes do not become favorable fill prices."""
+        current = start
+        for _ in range(500):
+            if target > current:
+                candidates = [
+                    order.trigger_price for order in bot.open_orders
+                    if order.side == "SELL" and current < order.trigger_price <= target
+                ]
+                if bot.trailing_up_enabled and any(o.side == "BUY" for o in bot.open_orders):
+                    step = bot.step_pct / 100.0
+                    recenter_trigger = bot.reference_price * (1 + step * bot.trailing_trigger_steps)
+                    if current < recenter_trigger <= target:
+                        candidates.append(recenter_trigger)
+                next_price = min(candidates) if candidates else target
+            elif target < current:
+                candidates = [
+                    order.trigger_price for order in bot.open_orders
+                    if order.side == "BUY" and target <= order.trigger_price < current
+                ]
+                next_price = max(candidates) if candidates else target
+            else:
+                return
+            await engine.tick_bot(bot.id, price=next_price, now=when)
+            if next_price == target:
+                return
+            current = next_price
+        raise RuntimeError("Backtest segment exceeded the level-crossing safety limit")
+
     async def run(
         self,
         symbol: str,
@@ -59,6 +89,7 @@ class GridBacktester:
         budget_quote: float,
         step_pct: float,
         levels_each_side: int,
+        trailing_up_enabled: bool = False,
     ) -> dict:
         candles = [Candle.from_binance(row) for row in raw_candles]
         if len(candles) < 2:
@@ -80,14 +111,18 @@ class GridBacktester:
             budget_quote=budget_quote,
             step_pct=step_pct,
             levels_each_side=levels_each_side,
+            trailing_up_enabled=trailing_up_enabled,
         )
 
         peak_equity = budget_quote
         max_drawdown_pct = 0.0
         equity_curve: list[dict] = []
         for candle in candles[1:]:
-            for price in candle.price_path():
-                await engine.tick_bot(bot.id, price=price)
+            candle_time = datetime.fromtimestamp(candle.close_time / 1000, timezone.utc)
+            path = candle.price_path()
+            await engine.tick_bot(bot.id, price=path[0], now=candle_time)
+            for start_price, price in zip(path, path[1:]):
+                await self._tick_segment(engine, bot, start_price, price, candle_time)
                 equity = portfolio.snapshot({base_asset: price})["total_equity"]
                 peak_equity = max(peak_equity, equity)
                 if peak_equity > 0:
@@ -112,7 +147,9 @@ class GridBacktester:
                 "step_pct": step_pct,
                 "levels_each_side": levels_each_side,
                 "fee_rate_pct": self.fee_rate * 100,
-                "intrabar_path": "O-L-H-C for bullish / O-H-L-C for bearish",
+                "intrabar_path": ("O-L-H-C for bullish / O-H-L-C for bearish; "
+                                  "fills occur at crossed grid levels, not candle extremes"),
+                "trailing_up_enabled": trailing_up_enabled,
             },
             "performance": {
                 "starting_equity": budget_quote,
@@ -126,11 +163,53 @@ class GridBacktester:
                 "buy_hold_return_pct": buy_hold_return_pct,
                 "completed_cycles": bot.completed_cycles,
                 "trade_count": len(portfolio.trades),
+                "recenter_count": bot.recenter_count,
             },
             "final_portfolio": snapshot,
             "trades": portfolio.trade_history(),
             "grid_events": [asdict(event) for event in bot.events],
             "equity_curve": equity_curve,
+        }
+
+    async def compare_trailing(
+        self,
+        symbol: str,
+        base_asset: str,
+        raw_candles: list[list[Any]],
+        budget_quote: float,
+        step_pct: float,
+        levels_each_side: int,
+    ) -> dict:
+        fixed = await self.run(
+            symbol=symbol, base_asset=base_asset, raw_candles=raw_candles,
+            budget_quote=budget_quote, step_pct=step_pct,
+            levels_each_side=levels_each_side, trailing_up_enabled=False,
+        )
+        trailing = await self.run(
+            symbol=symbol, base_asset=base_asset, raw_candles=raw_candles,
+            budget_quote=budget_quote, step_pct=step_pct,
+            levels_each_side=levels_each_side, trailing_up_enabled=True,
+        )
+        fixed_performance = fixed["performance"]
+        trailing_performance = trailing["performance"]
+        return_delta = trailing_performance["return_pct"] - fixed_performance["return_pct"]
+        drawdown_delta = (
+            trailing_performance["max_drawdown_pct"] - fixed_performance["max_drawdown_pct"]
+        )
+        return {
+            "symbol": symbol.upper(),
+            "period": fixed["period"],
+            "configuration": fixed["configuration"],
+            "fixed": fixed_performance,
+            "trailing": trailing_performance,
+            "difference": {
+                "return_pct_points": return_delta,
+                "max_drawdown_pct_points": drawdown_delta,
+                "cycles": trailing_performance["completed_cycles"] - fixed_performance["completed_cycles"],
+                "fees_paid": trailing_performance["fees_paid"] - fixed_performance["fees_paid"],
+            },
+            "historical_winner": "TRAILING_UP" if return_delta > 0 else "FIXED_GRID" if return_delta < 0 else "TIE",
+            "warning": "Historical simulation is not a forecast and does not change the running PAPER bot.",
         }
 
     async def optimize(

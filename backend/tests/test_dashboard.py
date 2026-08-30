@@ -25,6 +25,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Вхід у Spot Grid Lab" in page.text
     assert "monitor-telegram" in page.text
     assert "/api/notifications/test" in script.text
+    assert "/api/backtest/grid/compare-trailing" in script.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "Strategy readiness" in script.text

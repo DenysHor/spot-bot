@@ -78,3 +78,25 @@ def test_walk_forward_uses_separate_validation_period():
     assert result["validation_performance"]["completed_cycles"] > 0
     assert result["status"] == "PASSED"
     assert result["pass_rule"].startswith("validation return")
+
+
+def test_compare_trailing_uses_identical_period_and_reports_deltas():
+    candles = [
+        kline(0, 100, 100, 100, 100),
+        kline(86_400_000, 100, 103, 99, 102),
+        kline(172_800_000, 102, 106, 101, 105),
+        kline(259_200_000, 105, 108, 103, 107),
+        kline(345_600_000, 107, 108, 104, 105),
+    ]
+
+    result = asyncio.run(GridBacktester().compare_trailing(
+        symbol="SOLUSDT", base_asset="SOL", raw_candles=candles,
+        budget_quote=1_000, step_pct=1, levels_each_side=4,
+    ))
+
+    assert result["fixed"]["recenter_count"] == 0
+    assert result["trailing"]["recenter_count"] > 0
+    assert result["historical_winner"] in {"FIXED_GRID", "TRAILING_UP", "TIE"}
+    expected_delta = result["trailing"]["return_pct"] - result["fixed"]["return_pct"]
+    assert result["difference"]["return_pct_points"] == expected_delta
+    assert "does not change" in result["warning"]

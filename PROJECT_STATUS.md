@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.18.0`
-Current implementation: monitored and daily-capped PAPER Trailing Up
+Current version: `0.19.0`
+Current implementation: historical Fixed Grid versus Trailing Up comparison
 
 ## Non-negotiable safety rules
 
@@ -73,6 +73,8 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Trailing Up is capped at three recenters per UTC day and resets automatically the next day.
 - Telegram reports every recenter and the first daily limit event.
 - Dashboard shows anchor price, next recenter trigger, last recenter time, daily usage, and post-recenter results.
+- Comparison backtest runs Fixed Grid and Trailing Up on the same candles without changing PAPER state.
+- Historical level crossings fill at the configured grid price rather than a favorable candle extreme.
 
 ## Local setup on a new Windows computer
 
@@ -109,7 +111,7 @@ Preserve unrelated user changes. Use small commits, run the full test suite, and
 5. Verify `/health` reports the new version.
 6. Hard-refresh the dashboard and confirm Market data, Telegram, and the running bot state.
 
-## Current validation milestone: v0.18
+## Current validation milestone: v0.19
 
 The evidence-based PAPER readiness gate is implemented without changing trading parameters automatically:
 
@@ -123,5 +125,7 @@ The evidence-based PAPER readiness gate is implemented without changing trading 
 Trailing Up is intentionally conservative: it moves pending BUY levels closer to a rising market but does not chase with an immediate market BUY. Its recenter events and results must be evaluated in PAPER before considering a separate capped trend allocation.
 
 Possible next milestone: manage separate named PAPER experiments so the fixed Grid and Trailing Up evidence never mix.
+
+Candidate-pair analysis must remain point-in-time and use fresh Binance data. Never hard-code a pair recommendation into automatic execution.
 
 Do not interpret one or a few profitable cycles as evidence that the strategy is ready for real funds.
