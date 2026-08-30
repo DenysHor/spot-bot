@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.32.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.33.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -95,6 +95,10 @@
             <label>Рівнів<input id="levels" type="number" value="4" min="1" max="50" required></label>
           </div>
           <label>Профіль стратегії<select id="strategy-profile"><option value="AUTO" selected>AUTO — застосувати перевірену рекомендацію</option><option value="RANGE_GRID">RANGE GRID — фіксована сітка</option><option value="TRAILING_GRID">TRAILING GRID — сітка рухається вгору</option><option value="UPTREND_HYBRID_10">HYBRID 10% — 10% тренд / 90% Grid</option><option value="UPTREND_HYBRID_20">HYBRID 20% — 20% тренд / 80% Grid</option><option value="UPTREND_HYBRID_30">HYBRID 30% — 30% тренд / 70% Grid</option></select></label>
+          <div class="split">
+            <label>Нижня межа<input id="price-floor" type="number" min="0" step="any" placeholder="AUTO"></label>
+            <label>Верхня межа<input id="price-ceiling" type="number" min="0" step="any" placeholder="AUTO"></label>
+          </div>
           <button id="analyze-grid" class="ghost" type="button">Перевірити пару та бюджет</button>
           <div id="grid-preflight" class="grid-preflight"><p>Перед запуском перевіримо ринок і портфельні ліміти.</p></div>
           <button type="submit">Запустити PAPER-бота</button>
@@ -150,21 +154,21 @@
     </section>
 
     <section class="panel backtest-panel detail-only">
-      <div class="panel-head"><div><p class="eyebrow">HISTORICAL TEST</p><h2>Backtest стратегії</h2></div></div>
+      <div class="panel-head"><div><p class="eyebrow">ІСТОРИЧНА ПЕРЕВІРКА</p><h2>Перевірка стратегії</h2></div></div>
       <form id="backtest-form" class="backtest-form">
         <label>Свічок<input id="bt-limit" type="number" value="500" min="2" max="1000"></label>
         <label>Бюджет<input id="bt-budget" type="number" value="1000" min="10"></label>
         <label>Крок, %<input id="bt-step" type="number" value="1.5" min="0.1" max="25" step="0.01"></label>
         <label>Рівнів<input id="bt-levels" type="number" value="4" min="1" max="50"></label>
-        <button type="submit">Запустити backtest</button>
+        <button type="submit">Перевірити на історії</button>
       </form>
       <div id="backtest-result" class="backtest-result hidden"></div>
       <div class="optimizer-head">
-        <div><h2>Grid Optimizer</h2><p class="form-note">Порівнює 15 комбінацій на тих самих свічках.</p></div>
+        <div><h2>Оптимізація сітки</h2><p class="form-note">Порівнює 15 комбінацій на тих самих свічках.</p></div>
         <div class="optimizer-actions">
-          <button class="ghost" id="compare-trailing-button" type="button">Fixed vs Trailing</button>
+          <button class="ghost" id="compare-trailing-button" type="button">Фіксована / рухома</button>
           <button class="ghost" id="compare-profiles-button" type="button">Порівняти профілі</button>
-          <button class="ghost" id="walk-forward-button" type="button">Walk-forward 70/30</button>
+          <button class="ghost" id="walk-forward-button" type="button">Перевірка 70/30</button>
           <button id="optimize-button" type="button">Знайти найкращі параметри</button>
         </div>
       </div>
@@ -175,6 +179,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.32.0"></script>
+  <script src="/static/app.js?v=0.33.0"></script>
 </body>
 </html>

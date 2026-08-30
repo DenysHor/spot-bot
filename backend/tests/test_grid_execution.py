@@ -225,3 +225,51 @@ def test_buy_side_pauses_for_low_unreserved_quote_while_sell_remains_active():
     asyncio.run(engine.tick_bot(bot.id, price=100.0))
     assert bot.buy_paused is False
     assert any(event.event == "BUY_SIDE_RESUMED" for event in bot.events)
+
+
+def test_price_corridor_blocks_buys_but_keeps_sells_active():
+    portfolio = PaperPortfolio(starting_quote=10_000.0, quote_asset="USDT")
+    broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot(
+        "SOLUSDT", "SOL", 100.0, 1_000.0, 10.0, 2,
+        price_floor=80.0, price_ceiling=120.0,
+    )
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    assert bot.snapshot()["open_positions"]
+
+    asyncio.run(engine.tick_bot(bot.id, price=70.0))
+    assert bot.out_of_range is True
+    assert bot.snapshot()["execution_status"] == "OUT_OF_RANGE"
+    assert sum(trade.side == "BUY" for trade in portfolio.trades) == 1
+    assert any(event.event == "PRICE_RANGE_EXITED" for event in bot.events)
+
+    asyncio.run(engine.tick_bot(bot.id, price=100.0))
+    assert bot.out_of_range is False
+    assert bot.completed_cycles == 1
+    assert any(event.event == "PRICE_RANGE_REENTERED" for event in bot.events)
+
+
+def test_soft_completion_sells_positions_without_replacement_buy():
+    portfolio = PaperPortfolio(starting_quote=10_000.0, quote_asset="USDT")
+    broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("BTCUSDT", "BTC", 100.0, 1_000.0, 10.0, 2)
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    engine.start_draining(bot.id)
+
+    assert bot.drain_mode is True
+    assert all(order.side == "SELL" for order in bot.open_orders)
+    asyncio.run(engine.tick_bot(bot.id, price=100.0))
+    assert bot.status == "STOPPED"
+    assert bot.completed_cycles == 1
+    assert bot.open_orders == []
+    assert any(event.event == "DRAIN_MODE_COMPLETED" for event in bot.events)

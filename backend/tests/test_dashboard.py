@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.32.0" in page.text
-    assert "/static/app.js?v=0.32.0" in page.text
+    assert "/static/styles.css?v=0.33.0" in page.text
+    assert "/static/app.js?v=0.33.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -25,8 +25,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "/api/backtest/grid/walk-forward" in script.text
     assert "/api/grid/bots/${id}/pause" in script.text
     assert "Smart DCA" in page.text
-    assert "Grid Optimizer" in page.text
-    assert "Walk-forward 70/30" in page.text
+    assert "Оптимізація сітки" in page.text
+    assert "Перевірка 70/30" in page.text
     assert "SAFETY &amp; MONITORING" in page.text
     assert "Вхід у Spot Grid Lab" in page.text
     assert "monitor-telegram" in page.text
@@ -40,20 +40,20 @@ def test_dashboard_and_static_assets_are_served():
     assert "AUTO-РЕКОМЕНДАЦІЯ" in script.text
     assert "HYBRID 10% — 10% тренд / 90% Grid" in page.text
     assert "applyRecommendedProfile" in script.text
-    assert "Trend P&amp;L" in script.text
+    assert "Результат тренду" in script.text
     assert "B — купівля" in page.text
     assert "Зелена/червона свічка — рух ціни" in page.text
     assert "`${shortSide} ${num(o.trigger_price" in script.text
     assert "labelX=w-6" in script.text
     assert 'id="step" type="number" value="1.5" min="0.1" max="25" step="0.01"' in page.text
-    assert "Hybrid Total Return" in script.text
-    assert "Grid-комісії" in script.text
-    assert "Trend-комісії" in script.text
+    assert "Загальна дохідність" in script.text
+    assert "Комісії сітки" in script.text
+    assert "Комісії тренду" in script.text
     assert "buy_paused" in script.text
     assert "SELL продовжують працювати" in script.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
-    assert "Strategy readiness" in script.text
+    assert "ЗБІР ДАНИХ" in script.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
     assert "/api/analytics/portfolio-comparison" in script.text

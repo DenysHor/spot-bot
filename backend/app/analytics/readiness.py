@@ -13,12 +13,12 @@ def strategy_readiness(performance: dict) -> dict:
     profit_factor = metrics["profit_factor"]
     excess_return = performance.get("excess_return_pct")
     criteria = [
-        {"key": "net_pnl", "label": "Hybrid Total P&L" if metrics.get("is_hybrid") else "Net P&L", "value": evaluated_pnl, "target": "> 0 USDT", "passed": evaluated_pnl > 0},
-        {"key": "drawdown", "label": "Realized drawdown", "value": metrics["realized_max_drawdown_pct"], "target": "<= 5%", "passed": metrics["realized_max_drawdown_pct"] <= 5},
-        {"key": "profit_factor", "label": "Profit factor", "value": profit_factor, "target": ">= 1.2", "passed": (profit_factor is None and metrics["profitable_cycles"] > 0) or (profit_factor is not None and profit_factor >= 1.2)},
-        {"key": "win_rate", "label": "Win rate", "value": metrics["win_rate_pct"], "target": ">= 50%", "passed": metrics["win_rate_pct"] >= 50},
-        {"key": "excess_return", "label": "Excess return", "value": excess_return, "target": ">= 0%", "passed": excess_return is not None and excess_return >= 0},
-        {"key": "fee_drag", "label": "Fee drag", "value": fee_drag_pct, "target": "<= 40%", "passed": fee_drag_pct <= 40},
+        {"key": "net_pnl", "label": "Загальний результат" if metrics.get("is_hybrid") else "Чистий результат", "value": evaluated_pnl, "target": "> 0 USDT", "passed": evaluated_pnl > 0},
+        {"key": "drawdown", "label": "Зафіксована просадка", "value": metrics["realized_max_drawdown_pct"], "target": "<= 5%", "passed": metrics["realized_max_drawdown_pct"] <= 5},
+        {"key": "profit_factor", "label": "Коеф. прибутку", "value": profit_factor, "target": ">= 1.2", "passed": (profit_factor is None and metrics["profitable_cycles"] > 0) or (profit_factor is not None and profit_factor >= 1.2)},
+        {"key": "win_rate", "label": "Виграшні цикли", "value": metrics["win_rate_pct"], "target": ">= 50%", "passed": metrics["win_rate_pct"] >= 50},
+        {"key": "excess_return", "label": "Перевага над ринком", "value": excess_return, "target": ">= 0%", "passed": excess_return is not None and excess_return >= 0},
+        {"key": "fee_drag", "label": "Вплив комісій", "value": fee_drag_pct, "target": "<= 40%", "passed": fee_drag_pct <= 40},
     ]
     enough_data = elapsed_days >= MIN_DAYS and cycles >= MIN_CYCLES
     passed_count = sum(item["passed"] for item in criteria)

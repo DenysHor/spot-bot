@@ -48,6 +48,9 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     grid_total_pnl = sum(snapshot.get("grid_pnl", 0.0) for snapshot in snapshots) if snapshots else realized
     trend_pnl = sum(snapshot.get("trend_pnl", 0.0) for snapshot in snapshots)
     hybrid_total_pnl = grid_total_pnl + trend_pnl
+    max_deployed_quote = max(
+        (snapshot.get("max_deployed_quote", 0.0) for snapshot in snapshots), default=0.0,
+    )
     trend_events = [
         event for bot in matching_bots for event in bot.events
         if event.event in {"HYBRID_SEED_BOUGHT", "HYBRID_SEED_SOLD"}
@@ -122,6 +125,8 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
             "grid_total_return_pct": grid_total_pnl / grid_budget * 100 if grid_budget else 0.0,
             "trend_return_pct": trend_pnl / trend_budget * 100 if trend_budget else 0.0,
             "hybrid_total_return_pct": hybrid_total_pnl / allocated_budget * 100 if allocated_budget else 0.0,
+            "max_deployed_quote": max_deployed_quote,
+            "return_on_max_deployed_pct": hybrid_total_pnl / max_deployed_quote * 100 if max_deployed_quote else 0.0,
             "grid_fees": grid_fees,
             "trend_fees": trend_fees,
             "realized_max_drawdown": max_drawdown,

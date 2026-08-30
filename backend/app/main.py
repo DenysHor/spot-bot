@@ -224,6 +224,16 @@ async def grid_preflight_analysis(request) -> dict:
     change_24h = float(ticker.get("priceChangePercent", 0.0))
     recommended_step = market_analysis["recommended_step_pct"]
     recommended_levels = market_analysis["recommended_levels_each_side"]
+    market_price = float(ticker["lastPrice"])
+    corridor_half_width_pct = min(30.0, max(
+        5.0, request.step_pct * request.levels_each_side, average_range * 3,
+    ))
+    recommended_floor = market_price * (1 - corridor_half_width_pct / 100)
+    recommended_ceiling = market_price * (1 + corridor_half_width_pct / 100)
+    if (request.price_floor is None) != (request.price_ceiling is None):
+        raise ValueError("Вкажіть обидві межі коридору або залиште обидві в AUTO")
+    if request.price_floor is not None and request.price_floor >= request.price_ceiling:
+        raise ValueError("Нижня межа коридору має бути меншою за верхню")
     fee_drag_pct = round((broker.fee_rate * 2 * 100) / request.step_pct * 100, 1)
     warnings: list[str] = []
     if quote_volume < 1_000_000:
@@ -256,7 +266,7 @@ async def grid_preflight_analysis(request) -> dict:
         "verdict": verdict,
         "budget": budget,
         "market": {
-            "price": float(ticker["lastPrice"]),
+            "price": market_price,
             "change_24h_pct": change_24h,
             "quote_volume_24h": quote_volume,
             "average_hourly_range_pct": round(average_range, 3),
@@ -267,6 +277,9 @@ async def grid_preflight_analysis(request) -> dict:
             "fee_drag_pct_of_step": fee_drag_pct,
             "recommended_step_pct": recommended_step,
             "recommended_levels_each_side": recommended_levels,
+            "price_floor": request.price_floor if request.price_floor is not None else recommended_floor,
+            "price_ceiling": request.price_ceiling if request.price_ceiling is not None else recommended_ceiling,
+            "corridor_mode": "MANUAL" if request.price_floor is not None else "AUTO",
         },
         "strategy": {
             "requested_profile": request.strategy_profile,
@@ -340,7 +353,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.32.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.33.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -383,6 +396,8 @@ class GridStartRequest(GridPlanRequest):
         default="AUTO",
         pattern=r"^(AUTO|RANGE_GRID|TRAILING_GRID|UPTREND_HYBRID_(10|20|30))$",
     )
+    price_floor: float | None = Field(default=None, gt=0)
+    price_ceiling: float | None = Field(default=None, gt=0)
 
 
 class GridTrailingRequest(BaseModel):
@@ -465,7 +480,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.32.0",
+        "version": "0.33.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -836,6 +851,8 @@ async def grid_start(request: GridStartRequest) -> dict:
         if not preflight["strategy"]["launch_allowed"]:
             raise ValueError(preflight["recommendation"])
         profile = preflight["strategy"]["resolved_profile"]
+        price_floor = preflight["parameters"]["price_floor"]
+        price_ceiling = preflight["parameters"]["price_ceiling"]
         seed_position_pct = {
             "UPTREND_HYBRID_10": 10.0,
             "UPTREND_HYBRID_20": 20.0,
@@ -853,6 +870,8 @@ async def grid_start(request: GridStartRequest) -> dict:
             trailing_up_enabled=profile != "RANGE_GRID",
             strategy_profile=profile,
             seed_position_pct=seed_position_pct,
+            price_floor=price_floor,
+            price_ceiling=price_ceiling,
         )
         return bot.snapshot()
     except ValueError as exc:
@@ -867,6 +886,16 @@ async def grid_trailing_up(bot_id: str, request: GridTrailingRequest) -> dict:
         raise HTTPException(status_code=409, detail="Trailing Up is PAPER-only")
     try:
         return grid_engine.set_trailing_up(bot_id, request.enabled).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/soft-complete")
+async def grid_soft_complete(bot_id: str) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Soft completion is PAPER-only")
+    try:
+        return grid_engine.start_draining(bot_id).snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -70,6 +70,11 @@ class GridBotState:
     buy_paused_since: str = ""
     buy_required_quote: float = 0.0
     buy_available_quote: float = 0.0
+    price_floor: float = 0.0
+    price_ceiling: float = 0.0
+    out_of_range: bool = False
+    drain_mode: bool = False
+    max_deployed_quote: float = 0.0
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
@@ -90,7 +95,21 @@ class GridBotState:
         result["trend_pnl"] = self.seed_realized_pnl + result["seed_unrealized_pnl"]
         result["total_pnl"] = result["grid_pnl"] + result["trend_pnl"]
         result["grid_budget_quote"] = self.budget_quote * (1 - self.seed_position_pct / 100)
-        result["execution_status"] = "BUY_PAUSED" if self.buy_paused else self.status
+        result["execution_status"] = (
+            "DRAINING" if self.drain_mode else "OUT_OF_RANGE" if self.out_of_range
+            else "BUY_PAUSED" if self.buy_paused else self.status
+        )
+        result["return_on_max_deployed_pct"] = (
+            result["total_pnl"] / self.max_deployed_quote * 100 if self.max_deployed_quote else 0.0
+        )
+        result["open_positions"] = [{
+            "buy_price": order.source_buy_price,
+            "quantity": order.quantity,
+            "cost_quote": order.source_buy_cost,
+            "target_sell_price": order.trigger_price,
+            "current_pnl": order.quantity * self.last_price * (1 - 0.001) - order.source_buy_cost,
+            "expected_net_profit": order.quantity * order.trigger_price * (1 - 0.001) - order.source_buy_cost,
+        } for order in sell_orders]
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
         step = self.step_pct / 100.0
@@ -142,6 +161,8 @@ class GridExecutionEngine:
         trailing_up_enabled: bool = False,
         strategy_profile: str = "RANGE_GRID",
         seed_position_pct: float = 0.0,
+        price_floor: float = 0.0,
+        price_ceiling: float = 0.0,
     ) -> GridBotState:
         symbol = symbol.upper()
         if any(bot.symbol == symbol and bot.status == "RUNNING" for bot in self.bots.values()):
@@ -152,6 +173,8 @@ class GridExecutionEngine:
             raise ValueError("levels_each_side must be between 1 and 50")
         if seed_position_pct < 0 or seed_position_pct > 30:
             raise ValueError("seed_position_pct must be between 0 and 30")
+        if price_floor < 0 or price_ceiling < 0 or (price_floor and price_ceiling and price_floor >= price_ceiling):
+            raise ValueError("price corridor must satisfy 0 < floor < ceiling")
 
         # Budget includes simulated fees, so a full set of BUY fills cannot exceed it.
         seed_total = budget_quote * seed_position_pct / 100
@@ -183,6 +206,8 @@ class GridExecutionEngine:
             trailing_up_enabled=trailing_up_enabled,
             strategy_profile=strategy_profile,
             seed_position_pct=seed_position_pct,
+            price_floor=price_floor,
+            price_ceiling=price_ceiling,
             open_orders=orders,
         )
         if seed_total > 0:
@@ -190,6 +215,7 @@ class GridExecutionEngine:
             trade = self.broker.market_buy(symbol, base_asset, reference_price, seed_quote)
             bot.seed_quantity = trade.quantity
             bot.seed_cost_quote = trade.quote_amount + trade.fee_quote
+            bot.max_deployed_quote = bot.seed_cost_quote
             bot.events.append(GridEvent(
                 timestamp=self._now(), event="HYBRID_SEED_BOUGHT", price=reference_price,
                 side="BUY", quantity=trade.quantity, quote_amount=trade.quote_amount,
@@ -201,6 +227,28 @@ class GridExecutionEngine:
                      f"Grid budget {grid_budget:.2f}; trend allocation {seed_position_pct:.0f}%"),
         ))
         self.bots[bot.id] = bot
+        self._persist(bot)
+        return bot
+
+    def start_draining(self, bot_id: str) -> GridBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "RUNNING":
+            raise ValueError("Only a running Grid bot can start soft completion")
+        if bot.drain_mode:
+            return bot
+        removed = sum(order.side == "BUY" for order in bot.open_orders)
+        bot.open_orders = [order for order in bot.open_orders if order.side != "BUY"]
+        bot.drain_mode = True
+        bot.events.append(GridEvent(
+            timestamp=self._now(), event="DRAIN_MODE_STARTED", price=bot.last_price,
+            message=f"Soft completion started; {removed} BUY levels cancelled; SELL remains active",
+        ))
+        if not any(order.side == "SELL" for order in bot.open_orders):
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="DRAIN_MODE_COMPLETED", price=bot.last_price,
+                message="No Grid positions remained; strategy completed",
+            ))
+            return self.stop_bot(bot.id)
         self._persist(bot)
         return bot
 
@@ -390,6 +438,25 @@ class GridExecutionEngine:
                 message=f"BUY liquidity restored with 10% safety buffer; available={available:.4f} USDT",
             ))
 
+    def _update_range_state(self, bot: GridBotState, current_price: float) -> None:
+        outside = bool(
+            (bot.price_floor and current_price < bot.price_floor)
+            or (bot.price_ceiling and current_price > bot.price_ceiling)
+        )
+        if outside and not bot.out_of_range:
+            bot.out_of_range = True
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="PRICE_RANGE_EXITED", price=current_price,
+                message=(f"Price left corridor {bot.price_floor:.8f}–{bot.price_ceiling:.8f}; "
+                         "BUY disabled; SELL remains active"),
+            ))
+        elif not outside and bot.out_of_range:
+            bot.out_of_range = False
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="PRICE_RANGE_REENTERED", price=current_price,
+                message="Price returned to corridor; BUY eligibility restored",
+            ))
+
     async def tick_bot(
         self, bot_id: str, price: float | None = None, now: datetime | None = None
     ) -> GridBotState:
@@ -403,8 +470,13 @@ class GridExecutionEngine:
         bot.last_price = current
         bot.last_success_at = self._now()
         bot.consecutive_errors = 0
+        bot.max_deployed_quote = max(
+            bot.max_deployed_quote, bot.spent_quote + bot.seed_cost_quote,
+        )
 
-        self._recenter_buys_up(bot, current, now)
+        self._update_range_state(bot, current)
+        if not bot.out_of_range and not bot.drain_mode:
+            self._recenter_buys_up(bot, current, now)
         self._maybe_resume_buys(bot, current)
 
         # Process BUYs from highest trigger downward, allowing gap moves to fill several levels.
@@ -414,7 +486,7 @@ class GridExecutionEngine:
             reverse=True,
         )
         for order in buys:
-            if bot.buy_paused:
+            if bot.buy_paused or bot.out_of_range or bot.drain_mode:
                 break
             total_cost = order.quote_amount * (1 + self.broker.fee_rate)
             grid_budget = bot.budget_quote * (1 - bot.seed_position_pct / 100)
@@ -444,6 +516,9 @@ class GridExecutionEngine:
 
             bot.open_orders.remove(order)
             bot.spent_quote += trade.quote_amount + trade.fee_quote
+            bot.max_deployed_quote = max(
+                bot.max_deployed_quote, bot.spent_quote + bot.seed_cost_quote,
+            )
             sell_trigger = current * (1 + bot.step_pct / 100.0)
             bot.open_orders.append(GridOrder(
                 id=uuid4().hex[:12], side="SELL", trigger_price=sell_trigger,
@@ -478,16 +553,25 @@ class GridExecutionEngine:
             bot.completed_cycles += 1
 
             replacement_buy = current / (1 + bot.step_pct / 100.0)
-            bot.open_orders.append(GridOrder(
-                id=uuid4().hex[:12], side="BUY", trigger_price=replacement_buy,
-                quote_amount=bot.quote_per_level,
-            ))
+            if not bot.drain_mode:
+                bot.open_orders.append(GridOrder(
+                    id=uuid4().hex[:12], side="BUY", trigger_price=replacement_buy,
+                    quote_amount=bot.quote_per_level,
+                ))
             bot.events.append(GridEvent(
                 timestamp=self._now(), event="SELL_FILLED", price=current,
                 side="SELL", quantity=trade.quantity, quote_amount=trade.quote_amount,
                 realized_cycle_pnl=cycle_pnl,
-                message=f"Replacement BUY created at {replacement_buy:.8f}",
+                message=("Soft completion: no replacement BUY"
+                         if bot.drain_mode else f"Replacement BUY created at {replacement_buy:.8f}"),
             ))
+
+        if bot.drain_mode and not any(order.side == "SELL" for order in bot.open_orders):
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="DRAIN_MODE_COMPLETED", price=current,
+                message="All Grid positions sold; strategy completed",
+            ))
+            self.stop_bot(bot.id)
 
         self._persist(bot)
         return bot
