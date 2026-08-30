@@ -216,7 +216,9 @@ class GridBacktester:
         profiles = {
             "RANGE_GRID": {"trailing_up_enabled": False, "seed_position_pct": 0.0},
             "TRAILING_GRID": {"trailing_up_enabled": True, "seed_position_pct": 0.0},
+            "UPTREND_HYBRID_10": {"trailing_up_enabled": True, "seed_position_pct": 10.0},
             "UPTREND_HYBRID_20": {"trailing_up_enabled": True, "seed_position_pct": 20.0},
+            "UPTREND_HYBRID_30": {"trailing_up_enabled": True, "seed_position_pct": 30.0},
         }
 
         async def evaluate(rows: list[list[Any]]) -> dict:
@@ -243,6 +245,18 @@ class GridBacktester:
         selected = max(training, key=lambda name: training[name]["risk_adjusted_score"])
         validation = await evaluate(validation_rows)
         ranking = sorted(overall, key=lambda name: overall[name]["risk_adjusted_score"], reverse=True)
+        bot_profiles = [name for name in profiles]
+        recommended_bot = max(bot_profiles, key=lambda name: training[name]["risk_adjusted_score"])
+        recommended_validation = validation[recommended_bot]
+        if recommended_bot.startswith("UPTREND_HYBRID"):
+            market_regime = "UPTREND"
+            seed_position_pct = profiles[recommended_bot]["seed_position_pct"]
+        elif recommended_bot == "RANGE_GRID":
+            market_regime = "RANGE"
+            seed_position_pct = 0.0
+        else:
+            market_regime = "TRENDING"
+            seed_position_pct = 0.0
         return {
             "symbol": symbol.upper(), "training_pct": training_pct,
             "profiles": overall, "ranking": ranking,
@@ -254,6 +268,15 @@ class GridBacktester:
                 "validation_passed": validation[selected]["return_pct"] > 0,
                 "training_candles": len(training_rows),
                 "validation_candles": len(validation_rows),
+            },
+            "recommendation": {
+                "market_regime": market_regime,
+                "recommended_bot_profile": recommended_bot,
+                "seed_position_pct": seed_position_pct,
+                "selected_on_training": training[recommended_bot],
+                "validation_performance": recommended_validation,
+                "validation_passed": recommended_validation["return_pct"] > 0,
+                "buy_and_hold_is_benchmark": True,
             },
             "warning": "Historical and walk-forward PAPER simulations are not forecasts.",
         }

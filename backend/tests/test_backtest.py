@@ -114,12 +114,18 @@ def test_compare_profiles_includes_hybrid_and_walk_forward_validation():
     ))
 
     assert set(result["profiles"]) == {
-        "RANGE_GRID", "TRAILING_GRID", "UPTREND_HYBRID_20", "BUY_AND_HOLD",
+        "RANGE_GRID", "TRAILING_GRID", "UPTREND_HYBRID_10",
+        "UPTREND_HYBRID_20", "UPTREND_HYBRID_30", "BUY_AND_HOLD",
     }
-    assert len(result["ranking"]) == 4
+    assert len(result["ranking"]) == 6
     assert result["historical_winner"] == result["ranking"][0]
     assert result["profiles"]["UPTREND_HYBRID_20"]["trade_count"] >= 1
     walk_forward = result["walk_forward"]
     assert walk_forward["selected_on_training"] in result["profiles"]
     assert walk_forward["training_candles"] == 14
     assert walk_forward["validation_candles"] == 7
+    recommendation = result["recommendation"]
+    assert recommendation["recommended_bot_profile"] != "BUY_AND_HOLD"
+    assert recommendation["recommended_bot_profile"] in result["profiles"]
+    assert recommendation["seed_position_pct"] in {0.0, 10.0, 20.0, 30.0}
+    assert recommendation["buy_and_hold_is_benchmark"] is True
