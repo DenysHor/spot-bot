@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.35.0" in page.text
-    assert "/static/app.js?v=0.35.0" in page.text
+    assert "/static/styles.css?v=0.36.0" in page.text
+    assert "/static/app.js?v=0.36.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -64,6 +64,10 @@ def test_dashboard_and_static_assets_are_served():
     assert "Середня ціна купівлі" in script.text
     assert "Незакритий результат" in script.text
     assert "Поточний етап" in script.text
+    assert "chart-alert" in page.text
+    assert "Межі коридору" in page.text
+    assert "Зарезервовано на купівлі" in script.text
+    assert "localizeEventFeed" in script.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
     assert "/api/analytics/portfolio-comparison" in script.text
