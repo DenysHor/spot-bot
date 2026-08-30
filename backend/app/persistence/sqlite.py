@@ -219,6 +219,7 @@ class SQLiteStore:
             self._ensure_column(db, "grid_bots", "out_of_range", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "drain_mode", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "max_deployed_quote", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "manual_buy_paused", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
@@ -279,6 +280,7 @@ class SQLiteStore:
                 values["buy_paused"] = bool(values["buy_paused"])
                 values["out_of_range"] = bool(values["out_of_range"])
                 values["drain_mode"] = bool(values["drain_mode"])
+                values["manual_buy_paused"] = bool(values["manual_buy_paused"])
                 bot = GridBotState(**values)
                 bot.open_orders = [GridOrder(**{k: v for k, v in dict(order).items() if k != "bot_id"})
                                    for order in db.execute("SELECT * FROM grid_orders WHERE bot_id = ?", (bot.id,))]
@@ -298,8 +300,8 @@ class SQLiteStore:
                  recenter_limit_event_day, strategy_profile, seed_position_pct, seed_quantity,
                  seed_cost_quote, seed_realized_pnl, buy_paused, buy_paused_reason,
                  buy_paused_since, buy_required_quote, buy_available_quote, price_floor,
-                 price_ceiling, out_of_range, drain_mode, max_deployed_quote)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                 price_ceiling, out_of_range, drain_mode, max_deployed_quote, manual_buy_paused)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.reference_price,
                 bot.budget_quote, bot.step_pct, bot.levels_each_side, bot.quote_per_level,
                 bot.created_at, bot.last_price, bot.spent_quote, bot.realized_pnl, bot.completed_cycles,
@@ -312,7 +314,7 @@ class SQLiteStore:
                 bot.buy_paused, bot.buy_paused_reason, bot.buy_paused_since,
                 bot.buy_required_quote, bot.buy_available_quote,
                 bot.price_floor, bot.price_ceiling, bot.out_of_range,
-                bot.drain_mode, bot.max_deployed_quote,
+                bot.drain_mode, bot.max_deployed_quote, bot.manual_buy_paused,
             ))
             db.execute("DELETE FROM grid_orders WHERE bot_id = ?", (bot.id,))
             db.executemany("INSERT INTO grid_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [

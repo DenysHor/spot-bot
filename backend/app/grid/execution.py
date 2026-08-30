@@ -75,6 +75,7 @@ class GridBotState:
     out_of_range: bool = False
     drain_mode: bool = False
     max_deployed_quote: float = 0.0
+    manual_buy_paused: bool = False
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
@@ -97,6 +98,7 @@ class GridBotState:
         result["grid_budget_quote"] = self.budget_quote * (1 - self.seed_position_pct / 100)
         result["execution_status"] = (
             "DRAINING" if self.drain_mode else "OUT_OF_RANGE" if self.out_of_range
+            else "BUYS_DISABLED" if self.manual_buy_paused
             else "BUY_PAUSED" if self.buy_paused else self.status
         )
         result["return_on_max_deployed_pct"] = (
@@ -110,8 +112,25 @@ class GridBotState:
             "current_pnl": order.quantity * self.last_price * (1 - 0.001) - order.source_buy_cost,
             "expected_net_profit": order.quantity * order.trigger_price * (1 - 0.001) - order.source_buy_cost,
         } for order in sell_orders]
+        open_quantity = sum(order.quantity for order in sell_orders)
+        result["average_open_buy_price"] = (
+            sum(order.source_buy_price * order.quantity for order in sell_orders) / open_quantity
+            if open_quantity else 0.0
+        )
+        result["open_position_value_quote"] = sum(
+            order.quantity * self.last_price * (1 - 0.001) for order in sell_orders
+        )
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
+        buy_prices = [order.trigger_price for order in self.open_orders if order.side == "BUY"]
+        sell_prices = [order.trigger_price for order in sell_orders]
+        result["nearest_buy_price"] = max(buy_prices, default=None)
+        result["nearest_sell_price"] = min(sell_prices, default=None)
+        result["work_stage"] = (
+            "DRAINING" if self.drain_mode else "OUT_OF_RANGE" if self.out_of_range
+            else "BUYS_DISABLED" if self.manual_buy_paused else "WAITING_SELL"
+            if sell_orders else "WAITING_BUY"
+        )
         step = self.step_pct / 100.0
         result["next_recenter_price"] = (
             self.reference_price * (1 + step * self.trailing_trigger_steps)
@@ -249,6 +268,23 @@ class GridExecutionEngine:
                 message="No Grid positions remained; strategy completed",
             ))
             return self.stop_bot(bot.id)
+        self._persist(bot)
+        return bot
+
+    def set_manual_buy_pause(self, bot_id: str, paused: bool) -> GridBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status != "RUNNING" or bot.drain_mode:
+            raise ValueError("Buy control is available only for a running Grid bot")
+        if bot.manual_buy_paused == paused:
+            return bot
+        bot.manual_buy_paused = paused
+        bot.events.append(GridEvent(
+            timestamp=self._now(),
+            event="MANUAL_BUYS_DISABLED" if paused else "MANUAL_BUYS_ENABLED",
+            price=bot.last_price,
+            message=("New BUY fills disabled by user; SELL remains active"
+                     if paused else "New BUY fills enabled by user"),
+        ))
         self._persist(bot)
         return bot
 
@@ -475,7 +511,7 @@ class GridExecutionEngine:
         )
 
         self._update_range_state(bot, current)
-        if not bot.out_of_range and not bot.drain_mode:
+        if not bot.out_of_range and not bot.drain_mode and not bot.manual_buy_paused:
             self._recenter_buys_up(bot, current, now)
         self._maybe_resume_buys(bot, current)
 
@@ -486,7 +522,7 @@ class GridExecutionEngine:
             reverse=True,
         )
         for order in buys:
-            if bot.buy_paused or bot.out_of_range or bot.drain_mode:
+            if bot.buy_paused or bot.out_of_range or bot.drain_mode or bot.manual_buy_paused:
                 break
             total_cost = order.quote_amount * (1 + self.broker.fee_rate)
             grid_budget = bot.budget_quote * (1 - bot.seed_position_pct / 100)

@@ -20,6 +20,7 @@ def test_portfolio_and_grid_state_restore_after_restart(tmp_path):
     bot = engine.start_bot("BTCUSDT", "BTC", 100, 1_000, 10, 2, trailing_up_enabled=True)
 
     asyncio.run(engine.tick_bot(bot.id, price=90))
+    engine.set_manual_buy_pause(bot.id, True)
     original_trade = portfolio.trades[0]
     original_orders = bot.open_orders.copy()
     original_events = bot.events.copy()
@@ -41,6 +42,7 @@ def test_portfolio_and_grid_state_restore_after_restart(tmp_path):
     assert restored_bot.events == original_events
     assert restored_bot.trailing_up_enabled is True
     assert restored_bot.recenter_count == bot.recenter_count
+    assert restored_bot.manual_buy_paused is True
 
 
 def test_automatic_buy_is_blocked_by_risk_limits(tmp_path):

@@ -353,7 +353,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.34.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.35.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -480,7 +480,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.34.0",
+        "version": "0.35.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -896,6 +896,16 @@ async def grid_soft_complete(bot_id: str) -> dict:
         raise HTTPException(status_code=409, detail="Soft completion is PAPER-only")
     try:
         return grid_engine.start_draining(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/buy-control")
+async def grid_buy_control(bot_id: str, request: GridTrailingRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Buy control is PAPER-only")
+    try:
+        return grid_engine.set_manual_buy_pause(bot_id, not request.enabled).snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

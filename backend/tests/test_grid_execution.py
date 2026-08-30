@@ -273,3 +273,30 @@ def test_soft_completion_sells_positions_without_replacement_buy():
     assert bot.completed_cycles == 1
     assert bot.open_orders == []
     assert any(event.event == "DRAIN_MODE_COMPLETED" for event in bot.events)
+
+
+def test_manual_buy_control_keeps_sells_active_and_can_resume():
+    portfolio = PaperPortfolio(starting_quote=10_000.0, quote_asset="USDT")
+    broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1_000.0, 10.0, 2)
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    engine.set_manual_buy_pause(bot.id, True)
+
+    asyncio.run(engine.tick_bot(bot.id, price=80.0))
+    assert sum(trade.side == "BUY" for trade in portfolio.trades) == 1
+    snapshot = bot.snapshot()
+    assert snapshot["execution_status"] == "BUYS_DISABLED"
+    assert snapshot["work_stage"] == "BUYS_DISABLED"
+    assert snapshot["average_open_buy_price"] == 90.0
+    assert round(snapshot["nearest_sell_price"], 8) == 99.0
+
+    asyncio.run(engine.tick_bot(bot.id, price=100.0))
+    assert bot.completed_cycles == 1
+    engine.set_manual_buy_pause(bot.id, False)
+    assert bot.manual_buy_paused is False
+    assert any(event.event == "MANUAL_BUYS_ENABLED" for event in bot.events)
