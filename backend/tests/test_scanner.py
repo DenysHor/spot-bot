@@ -66,5 +66,6 @@ def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch):
     assert first.status_code == 200
     assert first.json()["analyzed_count"] == 1
     assert first.json()["items"][0]["symbol"] == "LINKUSDT"
+    assert first.json()["items"][0]["volume_rank"] == 1
     assert second.status_code == 200
     assert calls["tickers"] == 1

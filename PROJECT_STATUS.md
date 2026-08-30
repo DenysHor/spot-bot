@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.23.0`
-Current implementation: explainable top-50 Binance USDT PAPER market scanner
+Current version: `0.24.0`
+Current implementation: preset and manual filters for the top-50 PAPER market scanner
 
 ## Non-negotiable safety rules
 

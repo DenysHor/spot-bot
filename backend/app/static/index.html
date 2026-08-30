@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.23.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.24.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -31,7 +31,18 @@
     <section class="panel scanner-panel scanner-only">
       <div class="panel-head">
         <div><p class="eyebrow">BINANCE MARKET SCANNER</p><h2>Топ-50 Spot USDT-пар</h2></div>
-        <div class="scanner-actions"><select id="scanner-filter"><option value="ALL">Усі сигнали</option><option value="PAPER_CANDIDATE">PAPER-кандидати</option><option value="WATCH">Спостерігати</option><option value="OVERHEATED">Перегріті</option><option value="SKIP">Пропустити</option></select><button id="scanner-refresh" class="ghost" type="button">Оновити</button></div>
+        <div class="scanner-actions"><select id="scanner-preset"><option value="POPULAR">Популярні за обсягом</option><option value="GROWTH">Показують зростання</option><option value="VOLUME">Обсяг прискорюється</option><option value="GRID">Grid-кандидати</option><option value="NO_CHASE">Не наздоганяти</option><option value="MOMENTUM">Новий імпульс</option><option value="CUSTOM">Власні умови</option></select><select id="scanner-filter"><option value="ALL">Усі сигнали</option><option value="PAPER_CANDIDATE">PAPER-кандидати</option><option value="WATCH">Спостерігати</option><option value="OVERHEATED">Перегріті</option><option value="SKIP">Пропустити</option></select><button id="scanner-refresh" class="ghost" type="button">Оновити</button></div>
+      </div>
+      <div class="scanner-filters">
+        <label>Мін. обсяг 24г, млн USDT<input id="scanner-min-volume" type="number" min="0" step="1" value="10"></label>
+        <label>Ріст 24г від, %<input id="scanner-min-change" type="number" step="0.5" placeholder="будь-який"></label>
+        <label>Ріст 24г до, %<input id="scanner-max-change" type="number" step="0.5" placeholder="будь-який"></label>
+        <label>RSI від<input id="scanner-min-rsi" type="number" min="0" max="100" placeholder="0"></label>
+        <label>RSI до<input id="scanner-max-rsi" type="number" min="0" max="100" placeholder="100"></label>
+        <label>ATR від, %<input id="scanner-min-atr" type="number" min="0" step="0.1" placeholder="0"></label>
+        <label>ATR до, %<input id="scanner-max-atr" type="number" min="0" step="0.1" placeholder="∞"></label>
+        <label>Мін. score<input id="scanner-min-score" type="number" min="0" max="100" value="0"></label>
+        <label class="check-row scanner-check"><input id="scanner-hide-active" type="checkbox" checked><span>Приховати активні пари</span></label>
       </div>
       <div id="scanner-summary" class="scanner-summary"><p class="empty">Відкрийте вкладку, щоб завантажити аналіз.</p></div>
       <div id="market-scanner" class="scanner-table"></div>
@@ -158,6 +169,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.23.0"></script>
+  <script src="/static/app.js?v=0.24.0"></script>
 </body>
 </html>

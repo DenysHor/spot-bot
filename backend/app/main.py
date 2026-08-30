@@ -155,7 +155,10 @@ async def scan_top_quote_pairs() -> dict:
                     logger.warning("Market scanner skipped %s: %s", ticker.get("symbol"), describe_exception(exc))
                     return None
 
+        volume_ranks = {ticker["symbol"]: rank for rank, ticker in enumerate(liquid, start=1)}
         analyzed = [item for item in await asyncio.gather(*(analyze(ticker) for ticker in liquid)) if item]
+        for item in analyzed:
+            item["volume_rank"] = volume_ranks[item["symbol"]]
         analyzed.sort(key=lambda item: (item["score"], item["quote_volume_24h"]), reverse=True)
         for rank, item in enumerate(analyzed, start=1):
             item["scanner_rank"] = rank
@@ -289,7 +292,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.23.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.24.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -410,7 +413,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.23.0",
+        "version": "0.24.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
