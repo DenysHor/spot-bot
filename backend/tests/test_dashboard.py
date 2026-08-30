@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.26.0" in page.text
-    assert "/static/app.js?v=0.26.0" in page.text
+    assert "/static/styles.css?v=0.27.0" in page.text
+    assert "/static/app.js?v=0.27.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -47,6 +47,9 @@ def test_dashboard_and_static_assets_are_served():
     assert "scanner-min-volume" in page.text
     assert "signal-history" in page.text
     assert "strategy-profile" in page.text
+    assert "chart-tooltip" in page.text
+    assert "state.chartMarkers.push" in script.text
+    assert "showChartTrade" in script.text
     assert "dashboard-tabs" in page.text
     assert "symbol-options" in page.text
     assert "SOLUSDT" in page.text

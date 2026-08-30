@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.26.0`
-Current implementation: market-regime classifier and strategy-profile recommendation in Grid preflight
+Current version: `0.27.0`
+Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules
 
