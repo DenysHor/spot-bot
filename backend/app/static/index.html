@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.39.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.40.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
     <form id="login-form" class="login-card">
-      <p class="eyebrow">SECURE ACCESS</p>
+      <p class="eyebrow">ЗАХИЩЕНИЙ ВХІД</p>
       <h2>Вхід у Spot Grid Lab</h2>
       <label>Користувач<input id="login-username" autocomplete="username" required></label>
       <label>Пароль<input id="login-password" type="password" autocomplete="current-password" required></label>
@@ -19,7 +19,7 @@
   </div>
   <header>
     <div>
-      <p class="eyebrow">PAPER TRADING · BINANCE MARKET DATA</p>
+      <p class="eyebrow">PAPER-ТОРГІВЛЯ · ДАНІ РИНКУ BINANCE</p>
       <h1>Spot Grid Lab</h1>
     </div>
     <div class="header-actions"><div class="status"><span id="status-dot"></span><span id="status-text">Підключення…</span></div><button id="logout-button" class="ghost hidden">Вийти</button></div>
@@ -30,7 +30,7 @@
 
     <section class="panel scanner-panel scanner-only">
       <div class="panel-head">
-        <div><p class="eyebrow">BINANCE MARKET SCANNER</p><h2>Топ-50 Spot USDT-пар</h2></div>
+        <div><p class="eyebrow">СКАНЕР РИНКУ BINANCE</p><h2>Топ-50 Spot USDT-пар</h2></div>
         <div class="scanner-actions"><select id="scanner-preset"><option value="POPULAR">Популярні за обсягом</option><option value="GROWTH">Показують зростання</option><option value="VOLUME">Обсяг прискорюється</option><option value="GRID">Grid-кандидати</option><option value="NO_CHASE">Не наздоганяти</option><option value="MOMENTUM">Новий імпульс</option><option value="CUSTOM">Власні умови</option></select><select id="scanner-filter"><option value="ALL">Усі сигнали</option><option value="PAPER_CANDIDATE">PAPER-кандидати</option><option value="WATCH">Спостерігати</option><option value="OVERHEATED">Перегріті</option><option value="SKIP">Пропустити</option></select><button id="scanner-refresh" class="ghost" type="button">Оновити</button></div>
       </div>
       <div class="scanner-filters">
@@ -47,14 +47,14 @@
       <div id="scanner-summary" class="scanner-summary"><p class="empty">Відкрийте вкладку, щоб завантажити аналіз.</p></div>
       <div id="market-scanner" class="scanner-table"></div>
       <p class="form-note scanner-disclaimer">Сигнали призначені лише для відбору PAPER-кандидатів. Вони не гарантують зростання та не запускають угоди автоматично.</p>
-      <div class="signal-history-head"><div><p class="eyebrow">SIGNAL EVIDENCE</p><h2>Історія та якість сигналів</h2></div><span id="signal-history-summary" class="form-note">Накопичення спостережень…</span></div>
+      <div class="signal-history-head"><div><p class="eyebrow">ПЕРЕВІРКА СИГНАЛІВ</p><h2>Історія та якість сигналів</h2></div><span id="signal-history-summary" class="form-note">Накопичення спостережень…</span></div>
       <div id="signal-quality" class="signal-quality"><p class="empty">Ще немає оцінених сигналів.</p></div>
       <div id="signal-history" class="scanner-table signal-history"><p class="empty">Історія з’явиться після першого сканування.</p></div>
       <p class="form-note scanner-disclaimer">Сигнал вважається перевіреним лише після 30 незалежних 7-денних результатів. До цього всі оцінки мають статус «збір даних».</p>
     </section>
 
     <section id="overview-summary" class="panel overview-summary overview-only">
-      <div class="panel-head"><div><p class="eyebrow">PORTFOLIO OVERVIEW</p><h2>Активні Grid-боти</h2></div></div>
+      <div class="panel-head"><div><p class="eyebrow">ОГЛЯД ПОРТФЕЛЯ</p><h2>Активні Grid-боти</h2></div></div>
       <div id="overview-budget" class="overview-budget"></div>
       <div id="overview-bots" class="overview-bots"><p class="empty">Завантаження ботів…</p></div>
     </section>
@@ -62,12 +62,12 @@
     <section class="metrics overview-only" aria-label="Portfolio summary">
       <article><span>Загальний капітал</span><strong id="equity">—</strong></article>
       <article><span>Вільний USDT</span><strong id="quote-balance">—</strong></article>
-      <article><span>Realized P&amp;L</span><strong id="realized-pnl">—</strong></article>
+      <article><span>Зафіксований результат</span><strong id="realized-pnl">—</strong></article>
       <article><span>Сплачені комісії</span><strong id="fees">—</strong></article>
     </section>
 
     <section class="panel comparison-panel overview-only">
-      <div class="panel-head"><div><p class="eyebrow">BOT COMPARISON</p><h2>Порівняння та сигнали уваги</h2></div><span id="comparison-summary" class="form-note">Завантаження…</span></div>
+      <div class="panel-head"><div><p class="eyebrow">ПОРІВНЯННЯ БОТІВ</p><h2>Порівняння та сигнали уваги</h2></div><span id="comparison-summary" class="form-note">Завантаження…</span></div>
       <div id="bot-comparison" class="comparison-table"><p class="empty">Завантаження порівняння…</p></div>
       <p class="form-note comparison-note">Рейтинг активується окремо для кожного бота після 7 днів і 20 завершених циклів.</p>
     </section>
@@ -75,7 +75,7 @@
     <section class="grid-layout">
       <article class="panel chart-panel detail-only">
         <div class="panel-head">
-          <div><p class="eyebrow">MARKET</p><h2 id="chart-title">BTCUSDT</h2></div>
+          <div><p class="eyebrow">РИНОК</p><h2 id="chart-title">BTCUSDT</h2></div>
           <div class="chart-controls">
             <select id="interval"><option>15m</option><option selected>1h</option><option>4h</option><option>1d</option></select>
           </div>
@@ -111,14 +111,14 @@
 
     <section class="panel monitoring-panel">
       <div class="panel-head">
-        <div><p class="eyebrow">SAFETY &amp; MONITORING</p><h2>Стан системи</h2></div>
+        <div><p class="eyebrow">БЕЗПЕКА ТА МОНІТОРИНГ</p><h2>Стан системи</h2></div>
         <div class="export-actions"><a href="/api/export/trades.csv">Угоди CSV</a><a href="/api/export/events.csv">Події CSV</a></div>
       </div>
       <div class="monitoring-grid">
-        <div class="monitor-metric"><span>Market data</span><strong id="monitor-market">—</strong></div>
+        <div class="monitor-metric"><span>Ринкові дані</span><strong id="monitor-market">—</strong></div>
         <div class="monitor-metric"><span>Остання ціна</span><strong id="monitor-last-price">—</strong></div>
-        <div class="monitor-metric"><span>Grid running / paused</span><strong id="monitor-grid">—</strong></div>
-        <div class="monitor-metric"><span>DCA running / paused</span><strong id="monitor-dca">—</strong></div>
+        <div class="monitor-metric"><span>Grid: працює / пауза</span><strong id="monitor-grid">—</strong></div>
+        <div class="monitor-metric"><span>DCA: працює / пауза</span><strong id="monitor-dca">—</strong></div>
         <div class="monitor-metric"><span>Telegram</span><strong id="monitor-telegram">—</strong><button class="ghost compact" id="telegram-test" type="button">Тест</button></div>
       </div>
       <h3>Останні події</h3>
@@ -131,7 +131,7 @@
     </section>
 
     <section class="panel dca-panel overview-only">
-      <div class="panel-head"><div><p class="eyebrow">SMART ACCUMULATION</p><h2>Smart DCA</h2></div></div>
+      <div class="panel-head"><div><p class="eyebrow">РОЗУМНЕ НАКОПИЧЕННЯ</p><h2>Smart DCA</h2></div></div>
       <div class="dca-layout">
         <form id="dca-form" class="dca-form">
           <label>Загальний бюджет, USDT<input id="dca-budget" type="number" value="1000" min="10" required></label>
@@ -182,6 +182,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.39.0"></script>
+  <script src="/static/app.js?v=0.40.0"></script>
 </body>
 </html>

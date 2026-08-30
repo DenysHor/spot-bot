@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.39.0" in page.text
-    assert "/static/app.js?v=0.39.0" in page.text
+    assert "/static/styles.css?v=0.40.0" in page.text
+    assert "/static/app.js?v=0.40.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -27,7 +27,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Smart DCA" in page.text
     assert "Оптимізація сітки" in page.text
     assert "Перевірка 70/30" in page.text
-    assert "SAFETY &amp; MONITORING" in page.text
+    assert "БЕЗПЕКА ТА МОНІТОРИНГ" in page.text
     assert "Вхід у Spot Grid Lab" in page.text
     assert "monitor-telegram" in page.text
     assert "/api/notifications/test" in script.text
@@ -50,7 +50,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Комісії сітки" in script.text
     assert "Комісії тренду" in script.text
     assert "buy_paused" in script.text
-    assert "SELL продовжують працювати" in script.text
+    assert "Продажі продовжують працювати" in script.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "ЗБІР ДАНИХ" in script.text
@@ -76,6 +76,9 @@ def test_dashboard_and_static_assets_are_served():
     assert "chart-history-nav" in page.text
     assert "shiftChart" in script.text
     assert "limit=300" in script.text
+    assert "Зафіксований результат" in page.text
+    assert "Ринкові дані" in page.text
+    assert "Внутрішня помилка сервера" in script.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
     assert "/api/analytics/portfolio-comparison" in script.text
