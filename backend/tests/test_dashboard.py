@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.25.0" in page.text
-    assert "/static/app.js?v=0.25.0" in page.text
+    assert "/static/styles.css?v=0.26.0" in page.text
+    assert "/static/app.js?v=0.26.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -46,6 +46,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "scanner-preset" in page.text
     assert "scanner-min-volume" in page.text
     assert "signal-history" in page.text
+    assert "strategy-profile" in page.text
     assert "dashboard-tabs" in page.text
     assert "symbol-options" in page.text
     assert "SOLUSDT" in page.text
@@ -84,11 +85,14 @@ def test_grid_preflight_reports_market_and_budget_guidance(monkeypatch):
 
     async def fake_ticker(symbol):
         assert symbol == "LINKUSDT"
-        return {"lastPrice": "15", "priceChangePercent": "2.5", "quoteVolume": "25000000"}
+        return {"symbol": "LINKUSDT", "lastPrice": "15", "priceChangePercent": "0.5", "quoteVolume": "25000000"}
 
     async def fake_klines(symbol, interval, limit):
-        assert (symbol, interval, limit) == ("LINKUSDT", "1h", 48)
-        return [[0, "15", "15.15", "14.85", "15", "1", 1]] * 48
+        assert (symbol, interval, limit) == ("LINKUSDT", "4h", 60)
+        return [
+            [index, "15", "15.15", "14.85", "14.9" if index % 2 else "15.1", "1", index + 1, "1000000"]
+            for index in range(60)
+        ]
 
     monkeypatch.setattr(main.market, "exchange_info", fake_exchange_info)
     monkeypatch.setattr(main.market, "ticker_24h", fake_ticker)
@@ -101,7 +105,7 @@ def test_grid_preflight_reports_market_and_budget_guidance(monkeypatch):
 
     response = TestClient(main.app).post("/api/grid/preflight", json={
         "symbol": "LINKUSDT", "budget_quote": 500, "step_pct": 1.5,
-        "levels_each_side": 8, "trailing_up_enabled": True,
+        "levels_each_side": 8, "strategy_profile": "AUTO",
     })
 
     assert response.status_code == 200
@@ -109,7 +113,9 @@ def test_grid_preflight_reports_market_and_budget_guidance(monkeypatch):
     assert data["verdict"] == "SUITABLE"
     assert data["budget"]["allowed"] is True
     assert data["market"]["liquidity"] == "HIGH"
-    assert data["parameters"]["recommended_step_pct"] == 1.4
+    assert data["strategy"]["regime"]["name"] == "RANGE"
+    assert data["strategy"]["resolved_profile"] == "RANGE_GRID"
+    assert data["strategy"]["launch_allowed"] is True
 
 
 def test_grid_start_is_blocked_above_per_pair_budget_limit(monkeypatch):

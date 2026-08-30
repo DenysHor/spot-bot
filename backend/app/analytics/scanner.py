@@ -109,7 +109,7 @@ def analyze_symbol(ticker: dict, rows: list[list], base_asset: str) -> dict:
         signal, recommendation = "WATCH", "Спостерігати; підтвердження поки недостатньо"
     else:
         signal, recommendation = "SKIP", "Слабке співвідношення тренду, обсягу та ризику"
-    return {
+    result = {
         "symbol": ticker["symbol"], "base_asset": base_asset, "price": last,
         "quote_volume_24h": quote_volume, "change_24h_pct": change_24h,
         "change_7d_pct": round(change_7d, 3), "ema20": ema20, "ema50": ema50,
@@ -118,4 +118,42 @@ def analyze_symbol(ticker: dict, rows: list[list], base_asset: str) -> dict:
         "signal": signal, "recommendation": recommendation,
         "reasons": reasons[:4], "recommended_step_pct": round(min(5.0, max(0.35, atr_pct * 0.6)), 2),
         "recommended_levels_each_side": 6 if atr_pct >= 2 else 8,
+    }
+    result["regime"] = classify_market_regime(result)
+    return result
+
+
+def classify_market_regime(analysis: dict) -> dict:
+    price = analysis["price"]
+    ema20 = analysis["ema20"]
+    ema50 = analysis["ema50"]
+    rsi14 = analysis["rsi14"]
+    atr_pct = analysis["atr_pct"]
+    change_24h = analysis["change_24h_pct"]
+    change_7d = analysis["change_7d_pct"]
+    ema_gap_pct = abs(ema20 / ema50 - 1) * 100 if ema50 else 0.0
+    if rsi14 >= 72 or change_24h > 10 or change_7d > 25:
+        regime, profile, allowed = "OVERHEATED", "WAIT", False
+        confidence = min(95, round(55 + max(0, rsi14 - 70) * 2 + max(0, change_24h - 8)))
+        reasons = ["ціна або RSI показують перегрів", "не наздоганяти рух"]
+    elif price < ema20 < ema50 and change_7d < 0:
+        regime, profile, allowed = "DOWNTREND", "WAIT", False
+        confidence = min(95, round(60 + min(20, abs(change_7d))))
+        reasons = ["ціна нижче EMA20 та EMA50", "новий long Grid накопичував би актив під час падіння"]
+    elif ema_gap_pct <= 0.8 and 40 <= rsi14 <= 60 and 0.4 <= atr_pct <= 4:
+        regime, profile, allowed = "RANGE", "RANGE_GRID", True
+        confidence = min(90, round(75 - ema_gap_pct * 20 + min(10, atr_pct * 2)))
+        reasons = ["EMA20 та EMA50 розташовані близько", "RSI і волатильність відповідають боковому ринку"]
+    elif price > ema20 > ema50 and 0 < change_7d <= 25 and rsi14 < 72:
+        regime, profile, allowed = "UPTREND", "TRAILING_GRID", True
+        confidence = min(90, round(55 + min(20, change_7d) + (5 if analysis["volume_ratio"] >= 1.2 else 0)))
+        reasons = ["ціна вище EMA20 та EMA50", "висхідний тренд без критичного перегріву"]
+    else:
+        regime, profile, allowed = "UNCERTAIN", "WAIT", False
+        confidence = 50
+        reasons = ["сигнали тренду та діапазону суперечливі", "краще дочекатися чіткішого режиму"]
+    return {
+        "name": regime, "confidence_pct": confidence,
+        "recommended_profile": profile, "new_bot_allowed": allowed,
+        "reasons": reasons,
     }

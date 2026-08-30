@@ -31,6 +31,8 @@ def test_symbol_analysis_produces_explainable_paper_observation():
     assert result["signal"] in {"PAPER_CANDIDATE", "WATCH", "OVERHEATED", "SKIP"}
     assert result["recommended_step_pct"] >= 0.35
     assert result["reasons"]
+    assert result["regime"]["name"] in {"RANGE", "UPTREND", "OVERHEATED", "DOWNTREND", "UNCERTAIN"}
+    assert result["regime"]["recommended_profile"] in {"RANGE_GRID", "TRAILING_GRID", "WAIT"}
 
 
 def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch, tmp_path):

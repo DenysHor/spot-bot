@@ -216,17 +216,14 @@ async def grid_preflight_analysis(request) -> dict:
     symbol = await ensure_active_quote_symbol(request.symbol)
     budget = automation_budget_status(symbol, request.budget_quote)
     ticker, rows = await asyncio.gather(
-        market.ticker_24h(symbol), current_klines(symbol, interval="1h", limit=48),
+        market.ticker_24h(symbol), current_klines(symbol, interval="4h", limit=60),
     )
-    ranges = [
-        (float(row[2]) - float(row[3])) / float(row[4]) * 100
-        for row in rows if float(row[4]) > 0
-    ]
-    average_range = sum(ranges) / len(ranges) if ranges else 0.0
+    market_analysis = analyze_symbol(ticker, rows, base_asset_from_symbol(symbol))
+    average_range = market_analysis["atr_pct"]
     quote_volume = float(ticker.get("quoteVolume", 0.0))
     change_24h = float(ticker.get("priceChangePercent", 0.0))
-    recommended_step = round(min(5.0, max(0.35, average_range * 0.7)), 2)
-    recommended_levels = 6 if average_range >= 1.0 else 8
+    recommended_step = market_analysis["recommended_step_pct"]
+    recommended_levels = market_analysis["recommended_levels_each_side"]
     fee_drag_pct = round((broker.fee_rate * 2 * 100) / request.step_pct * 100, 1)
     warnings: list[str] = []
     if quote_volume < 1_000_000:
@@ -237,7 +234,13 @@ async def grid_preflight_analysis(request) -> dict:
         warnings.append("За 24 години стався сильний рух ціни; параметри можуть швидко застаріти")
     if request.step_pct < recommended_step * 0.6 or request.step_pct > recommended_step * 2:
         warnings.append(f"Поточний крок відрізняється від орієнтира {recommended_step:.2f}%")
-    verdict = "BLOCKED" if not budget["allowed"] else "CAUTION" if warnings else "SUITABLE"
+    regime = market_analysis["regime"]
+    resolved_profile = regime["recommended_profile"] if request.strategy_profile == "AUTO" else request.strategy_profile
+    regime_override = request.strategy_profile != "AUTO" and not regime["new_bot_allowed"]
+    if regime_override:
+        warnings.append("Обраний вручну профіль суперечить рекомендації WAIT")
+    launch_allowed = budget["allowed"] and (regime["new_bot_allowed"] or regime_override)
+    verdict = "BLOCKED" if not launch_allowed else "CAUTION" if warnings else "SUITABLE"
     return {
         "symbol": symbol,
         "verdict": verdict,
@@ -255,9 +258,17 @@ async def grid_preflight_analysis(request) -> dict:
             "recommended_step_pct": recommended_step,
             "recommended_levels_each_side": recommended_levels,
         },
+        "strategy": {
+            "requested_profile": request.strategy_profile,
+            "resolved_profile": resolved_profile,
+            "launch_allowed": launch_allowed,
+            "manual_override": regime_override,
+            "regime": regime,
+        },
         "warnings": warnings,
         "recommendation": (
             "; ".join(budget["reasons"]) if not budget["allowed"]
+            else "Рекомендація WAIT: новий бот в AUTO не запускається" if not launch_allowed
             else "Можна запускати в PAPER із підвищеною увагою до попереджень" if warnings
             else "Пара та бюджет відповідають поточним PAPER-обмеженням"
         ),
@@ -315,7 +326,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.25.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.26.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -354,6 +365,7 @@ class GridPlanRequest(BaseModel):
 
 class GridStartRequest(GridPlanRequest):
     trailing_up_enabled: bool = False
+    strategy_profile: str = Field(default="AUTO", pattern=r"^(AUTO|RANGE_GRID|TRAILING_GRID)$")
 
 
 class GridTrailingRequest(BaseModel):
@@ -436,7 +448,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.25.0",
+        "version": "0.26.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -785,6 +797,10 @@ async def grid_start(request: GridStartRequest) -> dict:
         budget_status = automation_budget_status(symbol, request.budget_quote)
         if not budget_status["allowed"]:
             raise ValueError("; ".join(budget_status["reasons"]))
+        preflight = await grid_preflight_analysis(request)
+        if not preflight["strategy"]["launch_allowed"]:
+            raise ValueError(preflight["recommendation"])
+        profile = preflight["strategy"]["resolved_profile"]
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
         bot = grid_engine.start_bot(
@@ -794,7 +810,7 @@ async def grid_start(request: GridStartRequest) -> dict:
             budget_quote=request.budget_quote,
             step_pct=request.step_pct,
             levels_each_side=request.levels_each_side,
-            trailing_up_enabled=request.trailing_up_enabled,
+            trailing_up_enabled=profile == "TRAILING_GRID",
         )
         return bot.snapshot()
     except ValueError as exc:

@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.25.0`
-Current implementation: persistent scanner signal history and 24h/72h/7d outcome validation
+Current version: `0.26.0`
+Current implementation: market-regime classifier and strategy-profile recommendation in Grid preflight
 
 ## Non-negotiable safety rules
 
