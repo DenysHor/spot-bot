@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.33.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.34.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -86,7 +86,7 @@
       </article>
 
       <article class="panel control-panel overview-only">
-        <div class="panel-head"><div><p class="eyebrow">NEW BOT</p><h2>Запустити Grid</h2></div></div>
+        <div class="panel-head"><div><p class="eyebrow">НОВИЙ БОТ</p><h2>Запустити сітку</h2></div></div>
         <form id="start-form">
           <label>Binance Spot USDT-пара<div class="symbol-search"><input id="symbol" list="symbol-options" value="BTCUSDT" autocomplete="off" aria-label="Пошук Binance USDT-пари" required><datalist id="symbol-options"><option value="BTCUSDT"><option value="ETHUSDT"><option value="BNBUSDT"><option value="SOLUSDT"></datalist><small id="symbol-search-status">Почніть вводити назву монети</small></div></label>
           <label>Бюджет, USDT<input id="budget" type="number" value="1000" min="10" step="10" required></label>
@@ -94,7 +94,7 @@
             <label>Крок, %<input id="step" type="number" value="1.5" min="0.1" max="25" step="0.01" required></label>
             <label>Рівнів<input id="levels" type="number" value="4" min="1" max="50" required></label>
           </div>
-          <label>Профіль стратегії<select id="strategy-profile"><option value="AUTO" selected>AUTO — застосувати перевірену рекомендацію</option><option value="RANGE_GRID">RANGE GRID — фіксована сітка</option><option value="TRAILING_GRID">TRAILING GRID — сітка рухається вгору</option><option value="UPTREND_HYBRID_10">HYBRID 10% — 10% тренд / 90% Grid</option><option value="UPTREND_HYBRID_20">HYBRID 20% — 20% тренд / 80% Grid</option><option value="UPTREND_HYBRID_30">HYBRID 30% — 30% тренд / 70% Grid</option></select></label>
+          <label>Профіль стратегії<select id="strategy-profile"><option value="AUTO" selected>АВТО — застосувати перевірену рекомендацію</option><option value="RANGE_GRID">БОКОВА СІТКА — фіксовані рівні</option><option value="TRAILING_GRID">РУХОМА СІТКА — рухається вгору</option><option value="UPTREND_HYBRID_10">ГІБРИД 10% — 10% тренд / 90% сітка</option><option value="UPTREND_HYBRID_20">ГІБРИД 20% — 20% тренд / 80% сітка</option><option value="UPTREND_HYBRID_30">ГІБРИД 30% — 30% тренд / 70% сітка</option></select></label>
           <div class="split">
             <label>Нижня межа<input id="price-floor" type="number" min="0" step="any" placeholder="AUTO"></label>
             <label>Верхня межа<input id="price-ceiling" type="number" min="0" step="any" placeholder="AUTO"></label>
@@ -124,7 +124,7 @@
     </section>
 
     <section class="panel bots-panel detail-only">
-      <div class="panel-head"><div><p class="eyebrow">AUTOMATION</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
+      <div class="panel-head"><div><p class="eyebrow">АВТОМАТИЗАЦІЯ</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>
     </section>
 
@@ -144,7 +144,7 @@
 
     <section class="panel analytics-panel detail-only">
       <div class="panel-head">
-        <div><p class="eyebrow">PERFORMANCE</p><h2>Grid-аналітика</h2></div>
+        <div><p class="eyebrow">РЕЗУЛЬТАТИ</p><h2>Grid-аналітика</h2></div>
         <div class="period-switch"><button class="ghost active" data-days="7" type="button">7 днів</button><button class="ghost" data-days="30" type="button">30 днів</button></div>
       </div>
       <div id="analytics-metrics" class="analytics-metrics"><p class="empty">Завантаження аналітики…</p></div>
@@ -179,6 +179,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.33.0"></script>
+  <script src="/static/app.js?v=0.34.0"></script>
 </body>
 </html>

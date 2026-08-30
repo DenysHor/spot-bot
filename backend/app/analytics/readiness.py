@@ -25,7 +25,7 @@ def strategy_readiness(performance: dict) -> dict:
     quality_score = passed_count / len(criteria) * 100
     if not enough_data:
         status = "COLLECTING_DATA"
-        recommendation = f"Continue PAPER collection: {elapsed_days:.1f}/{MIN_DAYS} days and {cycles}/{MIN_CYCLES} cycles."
+        recommendation = f"Продовжуйте збір PAPER-даних: {elapsed_days:.1f}/{MIN_DAYS} днів і {cycles}/{MIN_CYCLES} циклів."
     elif passed_count == len(criteria):
         status = "PASSED"
         recommendation = "Keep the current PAPER parameters and continue validation; LIVE remains disabled."
