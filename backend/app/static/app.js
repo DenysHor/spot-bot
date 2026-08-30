@@ -50,7 +50,7 @@ function drawChart(){
   const orders=state.bots.filter(b=>b.symbol===symbol&&b.status==='RUNNING').flatMap(b=>b.open_orders);
   const firstTime=c[0].open_time,lastTime=c[c.length-1].close_time;
   const trades=state.trades.filter(t=>{const time=new Date(t.timestamp).getTime();return t.symbol===symbol&&time>=firstTime&&time<=lastTime});
-  const left=10,right=78,top=12,bottom=28;
+  const left=10,right=118,top=12,bottom=28;
   const all=[...c.flatMap(v=>[v.low,v.high]),...orders.map(o=>o.trigger_price),...trades.map(t=>t.price)];
   const min=Math.min(...all),max=Math.max(...all),pad=(max-min)*.08||1,lo=min-pad,hi=max+pad;
   const x=i=>left+i*(w-left-right)/(c.length-1),y=p=>top+(hi-p)*(h-top-bottom)/(hi-lo);
@@ -63,7 +63,7 @@ function drawChart(){
   const labels=orders.map(order=>({order,actualY:y(order.trigger_price)})).sort((a,b)=>a.actualY-b.actualY);
   labels.forEach((item,index)=>{item.labelY=Math.max(item.actualY,index?labels[index-1].labelY+13:top+7)});
   if(labels.length){const overflow=labels[labels.length-1].labelY-(h-bottom-3);if(overflow>0)labels.forEach(item=>item.labelY-=overflow)}
-  labels.forEach(({order:o,actualY,labelY})=>{const color=o.side==='BUY'?'#42d39b':'#ff6b75',shortSide=o.side==='BUY'?'B':'S';ctx.strokeStyle=color;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(left,actualY);ctx.lineTo(w-right,actualY);ctx.stroke();ctx.setLineDash([]);if(Math.abs(labelY-actualY)>2){ctx.globalAlpha=.55;ctx.beginPath();ctx.moveTo(w-right-20,actualY);ctx.lineTo(w-right-3,labelY);ctx.stroke();ctx.globalAlpha=1}ctx.fillStyle=color;ctx.textAlign='right';ctx.font='10px system-ui';ctx.fillText(`${shortSide} ${num(o.trigger_price,o.trigger_price<10?4:2)}`,w-right-5,labelY+3)});
+  labels.forEach(({order:o,actualY,labelY})=>{const color=o.side==='BUY'?'#42d39b':'#ff6b75',shortSide=o.side==='BUY'?'B':'S',labelX=w-6;ctx.strokeStyle=color;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(left,actualY);ctx.lineTo(w-right,actualY);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=.5;ctx.beginPath();ctx.moveTo(w-right,actualY);ctx.lineTo(w-right+38,labelY);ctx.stroke();ctx.globalAlpha=1;ctx.fillStyle=color;ctx.textAlign='right';ctx.font='10px system-ui';ctx.fillText(`${shortSide} ${num(o.trigger_price,o.trigger_price<10?4:2)}`,labelX,labelY+3)});
   trades.forEach(trade=>{const time=new Date(trade.timestamp).getTime(),index=c.findIndex(v=>time>=v.open_time&&time<=v.close_time);if(index<0)return;const xx=x(index),yy=y(trade.price),buy=trade.side==='BUY';ctx.fillStyle=buy?'#42d39b':'#ff6b75';ctx.beginPath();ctx.arc(xx,yy,8,0,Math.PI*2);ctx.fill();ctx.fillStyle='#07130f';ctx.font='bold 9px system-ui';ctx.textAlign='center';ctx.fillText(buy?'B':'S',xx,yy+3);state.chartMarkers.push({x:xx,y:yy,trade})});
 }
 async function refresh(){try{const tasks=[loadPortfolio(),loadTrades(),loadBots(),loadDcaBots(),loadMonitoring(),loadComparison()];if(state.view==='bot')tasks.push(loadMarket(),loadAnalytics());await Promise.all(tasks);document.body.classList.add('online');$('status-text').textContent='PAPER · Online'}catch(e){document.body.classList.remove('online');$('status-text').textContent='Помилка API';toast(e.message)}}

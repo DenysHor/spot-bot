@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.30.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.30.2">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -82,7 +82,7 @@
         </div>
         <div class="price-line"><strong id="market-price">—</strong><span id="change">—</span></div>
         <div class="canvas-wrap"><canvas id="market-chart"></canvas><div id="chart-empty">Завантаження графіка…</div><div id="chart-tooltip" class="chart-tooltip hidden"></div></div>
-        <div class="legend"><span><i class="price-key"></i>Свічки</span><span><i class="buy-key"></i>B — купівля</span><span><i class="sell-key"></i>S — продаж</span></div>
+        <div class="legend"><span><i class="candle-key"><b></b><b></b></i>Зелена/червона свічка — рух ціни</span><span><i class="buy-key"></i>B — купівля</span><span><i class="sell-key"></i>S — продаж</span></div>
       </article>
 
       <article class="panel control-panel overview-only">
@@ -175,6 +175,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.30.1"></script>
+  <script src="/static/app.js?v=0.30.2"></script>
 </body>
 </html>
