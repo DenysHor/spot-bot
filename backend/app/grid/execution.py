@@ -60,6 +60,11 @@ class GridBotState:
     recenter_count_today: int = 0
     max_recenters_per_day: int = 3
     recenter_limit_event_day: str = ""
+    strategy_profile: str = "RANGE_GRID"
+    seed_position_pct: float = 0.0
+    seed_quantity: float = 0.0
+    seed_cost_quote: float = 0.0
+    seed_realized_pnl: float = 0.0
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
@@ -68,12 +73,18 @@ class GridBotState:
         today = datetime.now(timezone.utc).date().isoformat()
         result["recenter_count_today"] = self.recenter_count_today if self.recenter_day == today else 0
         sell_orders = [order for order in self.open_orders if order.side == "SELL"]
-        result["open_exposure_quote"] = sum(order.source_buy_cost for order in sell_orders)
+        result["grid_open_exposure_quote"] = sum(order.source_buy_cost for order in sell_orders)
+        result["open_exposure_quote"] = result["grid_open_exposure_quote"] + self.seed_cost_quote
         result["unrealized_pnl"] = sum(
             order.quantity * self.last_price * (1 - 0.001) - order.source_buy_cost
             for order in sell_orders
         )
-        result["total_pnl"] = self.realized_pnl + result["unrealized_pnl"]
+        result["grid_pnl"] = self.realized_pnl + result["unrealized_pnl"]
+        result["seed_value_quote"] = self.seed_quantity * self.last_price * (1 - 0.001)
+        result["seed_unrealized_pnl"] = result["seed_value_quote"] - self.seed_cost_quote
+        result["trend_pnl"] = self.seed_realized_pnl + result["seed_unrealized_pnl"]
+        result["total_pnl"] = result["grid_pnl"] + result["trend_pnl"]
+        result["grid_budget_quote"] = self.budget_quote * (1 - self.seed_position_pct / 100)
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
         step = self.step_pct / 100.0
@@ -123,6 +134,8 @@ class GridExecutionEngine:
         step_pct: float,
         levels_each_side: int,
         trailing_up_enabled: bool = False,
+        strategy_profile: str = "RANGE_GRID",
+        seed_position_pct: float = 0.0,
     ) -> GridBotState:
         symbol = symbol.upper()
         if any(bot.symbol == symbol and bot.status == "RUNNING" for bot in self.bots.values()):
@@ -131,9 +144,13 @@ class GridExecutionEngine:
             raise ValueError("reference_price, budget_quote and step_pct must be positive")
         if levels_each_side < 1 or levels_each_side > 50:
             raise ValueError("levels_each_side must be between 1 and 50")
+        if seed_position_pct < 0 or seed_position_pct > 30:
+            raise ValueError("seed_position_pct must be between 0 and 30")
 
         # Budget includes simulated fees, so a full set of BUY fills cannot exceed it.
-        tranche_total = budget_quote / levels_each_side
+        seed_total = budget_quote * seed_position_pct / 100
+        grid_budget = budget_quote - seed_total
+        tranche_total = grid_budget / levels_each_side
         quote_per_level = tranche_total / (1 + self.broker.fee_rate)
         step = step_pct / 100.0
         orders = [
@@ -158,12 +175,24 @@ class GridExecutionEngine:
             created_at=self._now(),
             last_price=reference_price,
             trailing_up_enabled=trailing_up_enabled,
+            strategy_profile=strategy_profile,
+            seed_position_pct=seed_position_pct,
             open_orders=orders,
         )
+        if seed_total > 0:
+            seed_quote = seed_total / (1 + self.broker.fee_rate)
+            trade = self.broker.market_buy(symbol, base_asset, reference_price, seed_quote)
+            bot.seed_quantity = trade.quantity
+            bot.seed_cost_quote = trade.quote_amount + trade.fee_quote
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="HYBRID_SEED_BOUGHT", price=reference_price,
+                side="BUY", quantity=trade.quantity, quote_amount=trade.quote_amount,
+                message=f"Hybrid trend position opened with {seed_position_pct:.0f}% of bot budget",
+            ))
         bot.events.append(GridEvent(
             timestamp=self._now(), event="BOT_STARTED", price=reference_price,
-            message=(f"Grid started with {levels_each_side} BUY levels; "
-                     f"Trailing Up {'enabled' if trailing_up_enabled else 'disabled'}"),
+            message=(f"{strategy_profile} started with {levels_each_side} BUY levels; "
+                     f"Grid budget {grid_budget:.2f}; trend allocation {seed_position_pct:.0f}%"),
         ))
         self.bots[bot.id] = bot
         self._persist(bot)
@@ -173,6 +202,8 @@ class GridExecutionEngine:
         bot = self.get_bot(bot_id)
         if bot.status == "STOPPED":
             raise ValueError("Trailing Up cannot be changed for a stopped Grid bot")
+        if bot.seed_position_pct > 0 and not enabled:
+            raise ValueError("Trailing Up is required while a Hybrid trend position is active")
         bot.trailing_up_enabled = enabled
         bot.events.append(GridEvent(
             timestamp=self._now(), event="TRAILING_UP_ENABLED" if enabled else "TRAILING_UP_DISABLED",
@@ -233,6 +264,20 @@ class GridExecutionEngine:
         bot = self.get_bot(bot_id)
         if any(order.side == "SELL" for order in bot.open_orders):
             raise ValueError("Cannot stop a bot with open SELL levels; pause it instead")
+        if bot.seed_quantity > 0:
+            trade = self.broker.market_sell(
+                bot.symbol, bot.base_asset, bot.last_price, bot.seed_quantity,
+            )
+            proceeds = trade.quote_amount - trade.fee_quote
+            bot.seed_realized_pnl += proceeds - bot.seed_cost_quote
+            bot.events.append(GridEvent(
+                timestamp=self._now(), event="HYBRID_SEED_SOLD", price=bot.last_price,
+                side="SELL", quantity=trade.quantity, quote_amount=trade.quote_amount,
+                realized_cycle_pnl=proceeds - bot.seed_cost_quote,
+                message="Hybrid trend position closed when bot stopped",
+            ))
+            bot.seed_quantity = 0.0
+            bot.seed_cost_quote = 0.0
         bot.status = "STOPPED"
         bot.events.append(GridEvent(timestamp=self._now(), event="BOT_STOPPED", price=bot.last_price))
         self._persist(bot)
@@ -316,7 +361,8 @@ class GridExecutionEngine:
         )
         for order in buys:
             total_cost = order.quote_amount * (1 + self.broker.fee_rate)
-            if bot.spent_quote + total_cost > bot.budget_quote + 1e-9:
+            grid_budget = bot.budget_quote * (1 - bot.seed_position_pct / 100)
+            if bot.spent_quote + total_cost > grid_budget + 1e-9:
                 continue
             decision = self._risk_decision(bot, order.quote_amount, current)
             if decision is not None and not decision.allowed:

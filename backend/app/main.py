@@ -235,7 +235,17 @@ async def grid_preflight_analysis(request) -> dict:
     if request.step_pct < recommended_step * 0.6 or request.step_pct > recommended_step * 2:
         warnings.append(f"Поточний крок відрізняється від орієнтира {recommended_step:.2f}%")
     regime = market_analysis["regime"]
+    profile_evidence = None
     resolved_profile = regime["recommended_profile"] if request.strategy_profile == "AUTO" else request.strategy_profile
+    if request.strategy_profile == "AUTO" and regime["name"] == "UPTREND":
+        profile_evidence = await backtester.compare_profiles(
+            symbol=symbol, base_asset=base_asset_from_symbol(symbol), raw_candles=rows,
+            budget_quote=request.budget_quote, step_pct=request.step_pct,
+            levels_each_side=request.levels_each_side, training_pct=70,
+        )
+        evidence_recommendation = profile_evidence["recommendation"]
+        if evidence_recommendation["validation_passed"]:
+            resolved_profile = evidence_recommendation["recommended_bot_profile"]
     regime_override = request.strategy_profile != "AUTO" and not regime["new_bot_allowed"]
     if regime_override:
         warnings.append("Обраний вручну профіль суперечить рекомендації WAIT")
@@ -264,6 +274,10 @@ async def grid_preflight_analysis(request) -> dict:
             "launch_allowed": launch_allowed,
             "manual_override": regime_override,
             "regime": regime,
+            "profile_evidence": ({
+                "validation_passed": profile_evidence["recommendation"]["validation_passed"],
+                "validation_return_pct": profile_evidence["recommendation"]["validation_performance"]["return_pct"],
+            } if profile_evidence else None),
         },
         "warnings": warnings,
         "recommendation": (
@@ -326,7 +340,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.29.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.30.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -365,7 +379,10 @@ class GridPlanRequest(BaseModel):
 
 class GridStartRequest(GridPlanRequest):
     trailing_up_enabled: bool = False
-    strategy_profile: str = Field(default="AUTO", pattern=r"^(AUTO|RANGE_GRID|TRAILING_GRID)$")
+    strategy_profile: str = Field(
+        default="AUTO",
+        pattern=r"^(AUTO|RANGE_GRID|TRAILING_GRID|UPTREND_HYBRID_(10|20|30))$",
+    )
 
 
 class GridTrailingRequest(BaseModel):
@@ -448,7 +465,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.29.0",
+        "version": "0.30.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -819,6 +836,11 @@ async def grid_start(request: GridStartRequest) -> dict:
         if not preflight["strategy"]["launch_allowed"]:
             raise ValueError(preflight["recommendation"])
         profile = preflight["strategy"]["resolved_profile"]
+        seed_position_pct = {
+            "UPTREND_HYBRID_10": 10.0,
+            "UPTREND_HYBRID_20": 20.0,
+            "UPTREND_HYBRID_30": 30.0,
+        }.get(profile, 0.0)
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
         bot = grid_engine.start_bot(
@@ -828,7 +850,9 @@ async def grid_start(request: GridStartRequest) -> dict:
             budget_quote=request.budget_quote,
             step_pct=request.step_pct,
             levels_each_side=request.levels_each_side,
-            trailing_up_enabled=profile == "TRAILING_GRID",
+            trailing_up_enabled=profile != "RANGE_GRID",
+            strategy_profile=profile,
+            seed_position_pct=seed_position_pct,
         )
         return bot.snapshot()
     except ValueError as exc:

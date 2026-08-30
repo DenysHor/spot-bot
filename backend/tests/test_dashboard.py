@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.29.0" in page.text
-    assert "/static/app.js?v=0.29.0" in page.text
+    assert "/static/styles.css?v=0.30.0" in page.text
+    assert "/static/app.js?v=0.30.0" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -38,6 +38,9 @@ def test_dashboard_and_static_assets_are_served():
     assert "UPTREND_HYBRID_10" in script.text
     assert "UPTREND_HYBRID_30" in script.text
     assert "AUTO-РЕКОМЕНДАЦІЯ" in script.text
+    assert "HYBRID 10% — 10% тренд / 90% Grid" in page.text
+    assert "applyRecommendedProfile" in script.text
+    assert "Trend P&amp;L" in script.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "Strategy readiness" in script.text

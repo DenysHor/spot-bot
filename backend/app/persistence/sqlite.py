@@ -204,6 +204,11 @@ class SQLiteStore:
             self._ensure_column(db, "grid_bots", "recenter_count_today", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "max_recenters_per_day", "INTEGER NOT NULL DEFAULT 3")
             self._ensure_column(db, "grid_bots", "recenter_limit_event_day", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "grid_bots", "strategy_profile", "TEXT NOT NULL DEFAULT 'RANGE_GRID'")
+            self._ensure_column(db, "grid_bots", "seed_position_pct", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "seed_quantity", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "seed_cost_quote", "REAL NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "seed_realized_pnl", "REAL NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
@@ -277,8 +282,9 @@ class SQLiteStore:
                  realized_pnl, completed_cycles, last_success_at, consecutive_errors,
                  paused_reason, trailing_up_enabled, trailing_trigger_steps, recenter_count,
                  last_recenter_at, recenter_day, recenter_count_today, max_recenters_per_day,
-                 recenter_limit_event_day)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                 recenter_limit_event_day, strategy_profile, seed_position_pct, seed_quantity,
+                 seed_cost_quote, seed_realized_pnl)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.reference_price,
                 bot.budget_quote, bot.step_pct, bot.levels_each_side, bot.quote_per_level,
                 bot.created_at, bot.last_price, bot.spent_quote, bot.realized_pnl, bot.completed_cycles,
@@ -286,6 +292,8 @@ class SQLiteStore:
                 bot.trailing_up_enabled, bot.trailing_trigger_steps, bot.recenter_count,
                 bot.last_recenter_at, bot.recenter_day, bot.recenter_count_today,
                 bot.max_recenters_per_day, bot.recenter_limit_event_day,
+                bot.strategy_profile, bot.seed_position_pct, bot.seed_quantity,
+                bot.seed_cost_quote, bot.seed_realized_pnl,
             ))
             db.execute("DELETE FROM grid_orders WHERE bot_id = ?", (bot.id,))
             db.executemany("INSERT INTO grid_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [

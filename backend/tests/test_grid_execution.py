@@ -60,6 +60,36 @@ def test_only_one_running_bot_per_symbol():
         assert "already exists" in str(exc)
 
 
+def test_hybrid_bot_opens_seed_and_keeps_grid_budget_separate():
+    portfolio = PaperPortfolio(starting_quote=10_000.0, quote_asset="USDT")
+    broker = PaperBroker(portfolio=portfolio, fee_rate=0.001)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot(
+        "BTCUSDT", "BTC", 100.0, 1_000.0, 2.0, 4,
+        trailing_up_enabled=True, strategy_profile="UPTREND_HYBRID_30",
+        seed_position_pct=30.0,
+    )
+
+    snapshot = bot.snapshot()
+    assert snapshot["strategy_profile"] == "UPTREND_HYBRID_30"
+    assert snapshot["grid_budget_quote"] == 700.0
+    assert round(snapshot["seed_cost_quote"], 8) == 300.0
+    assert snapshot["seed_quantity"] > 0
+    assert len(bot.open_orders) == 4
+    assert round(sum(order.quote_amount * 1.001 for order in bot.open_orders), 8) == 700.0
+    assert bot.events[0].event == "HYBRID_SEED_BOUGHT"
+
+    engine.stop_bot(bot.id)
+    stopped = bot.snapshot()
+    assert stopped["seed_quantity"] == 0
+    assert bot.events[-2].event == "HYBRID_SEED_SOLD"
+    assert bot.events[-1].event == "BOT_STOPPED"
+
+
 def test_grid_auto_pauses_after_three_engine_errors():
     portfolio = PaperPortfolio()
     broker = PaperBroker(portfolio=portfolio)
