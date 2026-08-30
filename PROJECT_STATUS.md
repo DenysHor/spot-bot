@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.44.0`
+Current version: `0.45.0`
 Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules
@@ -53,7 +53,8 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Persistent PAPER portfolio, positions, trades, fees, and P&L.
 - Automatic percentage Grid engine with paired SELL and replacement BUY levels.
 - Smart DCA engine.
-- SQLite recovery for portfolios, Grid/DCA bots, orders, events, and notification state.
+- Signal PAPER engine with EMA/RSI/volume confirmation, target, stop, signal-decay exit, and 72-hour timeout.
+- SQLite recovery for portfolios, Grid/DCA/Signal bots, orders, events, and notification state.
 - RiskManager enforcement and automatic pause after repeated engine errors.
 - Backtesting, parameter optimizer, and 70/30 walk-forward validation.
 - Password-protected responsive dashboard and CSV exports.

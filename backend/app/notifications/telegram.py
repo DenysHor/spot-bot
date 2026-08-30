@@ -13,6 +13,7 @@ IMPORTANT_EVENTS = {
     "PRICE_RANGE_EXITED", "PRICE_RANGE_REENTERED",
     "DRAIN_MODE_STARTED", "DRAIN_MODE_COMPLETED",
     "MANUAL_BUYS_DISABLED", "MANUAL_BUYS_ENABLED",
+    "SIGNAL_BUY_FILLED", "SIGNAL_SELL_FILLED",
 }
 
 EVENT_LABELS = {
@@ -25,6 +26,7 @@ EVENT_LABELS = {
     "PRICE_RANGE_EXITED": "⚠️ Ціна вийшла з коридору", "PRICE_RANGE_REENTERED": "✅ Ціна повернулася в коридор",
     "DRAIN_MODE_STARTED": "⏳ Почато м’яке завершення", "DRAIN_MODE_COMPLETED": "✅ М’яке завершення виконано",
     "MANUAL_BUYS_DISABLED": "⏸ Покупки вимкнено", "MANUAL_BUYS_ENABLED": "▶️ Покупки увімкнено",
+    "SIGNAL_BUY_FILLED": "🟢 Сигнальна купівля виконана", "SIGNAL_SELL_FILLED": "🔴 Сигнальну позицію закрито",
 }
 
 
@@ -55,12 +57,13 @@ class NotificationStatus:
 
 class TelegramNotifier:
     def __init__(self, token: str, chat_id: str, grid_engine, dca_engine,
-                 portfolio=None, store=None, poll_seconds: float = 2.0,
+                 signal_engine=None, portfolio=None, store=None, poll_seconds: float = 2.0,
                  daily_report_hour_utc: int = 20, sender=None) -> None:
         self.token = token
         self.chat_id = chat_id
         self.grid_engine = grid_engine
         self.dca_engine = dca_engine
+        self.signal_engine = signal_engine
         self.portfolio = portfolio
         self.store = store
         self.poll_seconds = max(1.0, poll_seconds)
@@ -75,7 +78,10 @@ class TelegramNotifier:
         self._running = False
 
     def _sources(self):
-        return (("GRID", self.grid_engine.bots), ("DCA", self.dca_engine.bots))
+        sources = [("GRID", self.grid_engine.bots), ("DCA", self.dca_engine.bots)]
+        if self.signal_engine is not None:
+            sources.append(("SIGNAL", self.signal_engine.bots))
+        return tuple(sources)
 
     def _state(self, key: str, default: str = "") -> str:
         return self.store.get_notification_state(key, default) if self.store is not None else default
@@ -96,7 +102,7 @@ class TelegramNotifier:
 
     @staticmethod
     def format_event(strategy: str, bot, event) -> str:
-        strategy_name = "Сітка" if strategy == "GRID" else "Накопичення"
+        strategy_name = {"GRID": "Сітка", "DCA": "Накопичення", "SIGNAL": "Сигнали"}.get(strategy, strategy)
         lines = [f"🤖 {bot.symbol} · {strategy_name}", EVENT_LABELS.get(event.event, event.event)]
         if event.price:
             lines.append(f"Ціна: {_price(event.price)} USDT")

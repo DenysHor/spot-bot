@@ -14,8 +14,10 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.44.0" in page.text
-    assert "/static/app.js?v=0.44.0" in page.text
+    assert "/static/styles.css?v=0.45.0" in page.text
+    assert "/static/app.js?v=0.45.0" in page.text
+    assert "Сигнальні PAPER-боти" in page.text
+    assert 'id="signal-preflight"' in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"

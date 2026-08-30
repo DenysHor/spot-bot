@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.44.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.45.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -119,6 +119,7 @@
         <div class="monitor-metric"><span>Остання ціна</span><strong id="monitor-last-price">—</strong></div>
         <div class="monitor-metric"><span>Grid: працює / пауза</span><strong id="monitor-grid">—</strong></div>
         <div class="monitor-metric"><span>DCA: працює / пауза</span><strong id="monitor-dca">—</strong></div>
+        <div class="monitor-metric"><span>Сигнали: працює / пауза</span><strong id="monitor-signal">—</strong></div>
         <div class="monitor-metric"><span>Telegram</span><strong id="monitor-telegram">—</strong><button class="ghost compact" id="telegram-test" type="button">Тест</button></div>
       </div>
       <h3>Останні події</h3>
@@ -128,6 +129,22 @@
     <section class="panel bots-panel detail-only">
       <div class="panel-head"><div><p class="eyebrow">АВТОМАТИЗАЦІЯ</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>
+    </section>
+
+    <section class="panel signal-panel overview-only">
+      <div class="panel-head"><div><p class="eyebrow">ТЕХНІЧНИЙ АНАЛІЗ</p><h2>Сигнальні PAPER-боти</h2></div></div>
+      <div class="signal-layout">
+        <form id="signal-form" class="signal-form">
+          <label>Binance Spot USDT-пара<input id="signal-symbol" list="symbol-options" value="BTCUSDT" required></label>
+          <label>Бюджет однієї позиції, USDT<input id="signal-budget" type="number" value="100" min="10" step="10" required></label>
+          <label>Мінімальна оцінка сигналу<input id="signal-score" type="number" value="65" min="50" max="90" required></label>
+          <button id="analyze-signal" class="ghost" type="button">Оцінити можливий результат</button>
+          <div id="signal-preflight" class="grid-preflight"><p>Перевіримо EMA, RSI, обсяг, потенціал і ризик.</p></div>
+          <button type="submit">Запустити АВТО PAPER</button>
+          <p class="form-note">Вхід: EMA20/EMA50 + RSI + обсяг + оцінка сигналу. Вихід: ціль, стоп, ослаблення сигналу або 72 години.</p>
+        </form>
+        <div id="signal-bots" class="bot-list signal-list"><p class="empty">Сигнальних ботів ще немає.</p></div>
+      </div>
     </section>
 
     <section class="panel dca-panel overview-only">
@@ -182,6 +199,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.44.0"></script>
+  <script src="/static/app.js?v=0.45.0"></script>
 </body>
 </html>

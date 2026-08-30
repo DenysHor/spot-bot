@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.44.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.45.0**. Automatic Grid, Smart DCA, and Signal Bot execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -57,6 +57,9 @@ Binance Spot trading manager with three execution modes:
 - Smart DCA with scheduled purchases and extra dip-triggered purchases
 - RiskManager enforcement and SQLite recovery for every DCA bot and event
 - Smart DCA controls, budget usage and purchase statistics in the dashboard
+- Multi-confirmation Signal PAPER bots using EMA20/EMA50, RSI, volume and scanner score
+- Signal preflight with estimated target, stop, possible net result and risk for the selected budget
+- One-position Signal execution with mandatory protective management, 72-hour timeout and SQLite recovery
 - Grid Optimizer comparing up to 30 parameter combinations on one candle dataset
 - Risk-adjusted optimizer ranking with a low-cycle confidence penalty
 - 70/30 walk-forward validation on a separate unseen candle period

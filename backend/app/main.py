@@ -28,6 +28,7 @@ from app.paper.broker import PaperBroker
 from app.paper.portfolio import PaperPortfolio
 from app.persistence.sqlite import SQLiteStore
 from app.risk.manager import RiskLimits, RiskManager
+from app.signal.execution import SignalExecutionEngine
 from app.strategies.smart_grid import SmartGrid
 
 market = BinancePublicClient()
@@ -180,16 +181,29 @@ async def scan_top_quote_pairs() -> dict:
         return result
 
 
+async def signal_analysis(symbol: str, base_asset: str) -> dict:
+    ticker, rows = await asyncio.gather(
+        market.ticker_24h(symbol), current_klines(symbol, interval="4h", limit=60),
+    )
+    return analyze_symbol(ticker, rows, base_asset)
+
+
 def automation_budget_status(symbol: str, requested_budget: float) -> dict:
     active_grid = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
     active_dca = [bot for bot in dca_engine.bots.values() if bot.status != "STOPPED"]
-    allocated = sum(bot.budget_quote for bot in active_grid) + sum(bot.budget_quote for bot in active_dca)
+    active_signal = [bot for bot in signal_engine.bots.values() if bot.status != "STOPPED"]
+    allocated = (sum(bot.budget_quote for bot in active_grid) + sum(bot.budget_quote for bot in active_dca)
+                 + sum(bot.budget_quote for bot in active_signal))
     capital = max(portfolio.starting_quote, 0.0)
     portfolio_cap = capital * settings.max_portfolio_allocation_pct / 100
     pair_cap = capital * settings.max_position_pct / 100
     reasons: list[str] = []
     if any(bot.symbol == symbol for bot in active_grid):
         reasons.append(f"Для {symbol} уже існує активний або призупинений Grid-бот")
+    if any(bot.symbol == symbol for bot in active_dca):
+        reasons.append(f"Для {symbol} уже існує активний або призупинений DCA-бот")
+    if any(bot.symbol == symbol for bot in active_signal):
+        reasons.append(f"Для {symbol} уже існує активний або призупинений Сигнальний бот")
     if len(active_grid) >= settings.max_grid_bots:
         reasons.append(f"Досягнуто ліміт {settings.max_grid_bots} Grid-ботів")
     if requested_budget > pair_cap + 1e-9:
@@ -313,9 +327,13 @@ dca_engine = DcaExecutionEngine(
     broker=broker, price_provider=current_price, risk_manager=risk_manager,
     poll_seconds=settings.grid_poll_seconds, store=store,
 )
+signal_engine = SignalExecutionEngine(
+    broker=broker, analysis_provider=signal_analysis, risk_manager=risk_manager,
+    poll_seconds=60, store=store,
+)
 notifier = TelegramNotifier(
     settings.telegram_bot_token, settings.telegram_chat_id, grid_engine, dca_engine,
-    portfolio=portfolio, store=store, poll_seconds=settings.notification_poll_seconds,
+    signal_engine=signal_engine, portfolio=portfolio, store=store, poll_seconds=settings.notification_poll_seconds,
     daily_report_hour_utc=settings.daily_report_hour_utc,
 )
 market_scanner_task: asyncio.Task | None = None
@@ -338,6 +356,7 @@ async def lifespan(app: FastAPI):
     if settings.trading_mode == "PAPER":
         grid_engine.start_background()
         dca_engine.start_background()
+        signal_engine.start_background()
         notifier.start_background()
         market_scanner_task = asyncio.create_task(market_scanner_forever())
     yield
@@ -351,9 +370,10 @@ async def lifespan(app: FastAPI):
     await notifier.stop_background()
     await grid_engine.stop_background()
     await dca_engine.stop_background()
+    await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.44.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.45.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -430,6 +450,12 @@ class DcaStartRequest(BaseModel):
     dip_trigger_pct: float = Field(default=5.0, gt=0, le=50)
 
 
+class SignalStartRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    budget_quote: float = Field(default=100.0, gt=0)
+    min_score: int = Field(default=65, ge=50, le=90)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -480,7 +506,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.44.0",
+        "version": "0.45.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -591,7 +617,77 @@ async def paper_reset() -> dict:
     portfolio.reset()
     grid_engine.reset()
     dca_engine.reset()
+    signal_engine.reset()
     return {"status": "reset", "portfolio": portfolio.snapshot(), "grid_bots": [], "dca_bots": []}
+
+
+@app.get("/api/signal/bots")
+async def signal_bots() -> dict:
+    return {"bots": signal_engine.list_bots()}
+
+
+@app.post("/api/signal/analyze")
+async def signal_analyze(request: SignalStartRequest) -> dict:
+    try:
+        symbol = await ensure_active_quote_symbol(request.symbol)
+        data = await signal_analysis(symbol, base_asset_from_symbol(symbol))
+        atr = max(0.1, float(data["atr_pct"]))
+        expected_pct = round(max(1.5, min(8.0, atr * 1.5)), 2)
+        risk_pct = round(max(1.0, min(5.0, atr)), 2)
+        ready = (data["score"] >= request.min_score and data["price"] > data["ema20"] > data["ema50"]
+                 and 45 <= data["rsi14"] <= 68 and data["volume_ratio"] >= 1.1)
+        fees = request.budget_quote * broker.fee_rate * 2
+        return {
+            "symbol": symbol, "entry_ready": ready, "analysis": data,
+            "expected_return_pct": expected_pct, "risk_pct": risk_pct,
+            "target_price": data["price"] * (1 + expected_pct / 100),
+            "stop_price": data["price"] * (1 - risk_pct / 100),
+            "possible_net_profit_quote": request.budget_quote * expected_pct / 100 - fees,
+            "possible_loss_quote": request.budget_quote * risk_pct / 100 + fees,
+            "budget": automation_budget_status(symbol, request.budget_quote),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Signal analysis failed: {exc}") from exc
+
+
+@app.post("/api/signal/bots/start")
+async def signal_start(request: SignalStartRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Сигнальний бот доступний лише в PAPER")
+    try:
+        symbol = await ensure_active_quote_symbol(request.symbol)
+        budget = automation_budget_status(symbol, request.budget_quote)
+        if not budget["allowed"]:
+            raise ValueError("; ".join(budget["reasons"]))
+        bot = signal_engine.start_bot(symbol, base_asset_from_symbol(symbol), request.budget_quote, request.min_score)
+        return (await signal_engine.tick_bot(bot.id)).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Signal bot start failed: {exc}") from exc
+
+
+@app.post("/api/signal/bots/{bot_id}/pause")
+async def signal_pause(bot_id: str) -> dict:
+    try:
+        return signal_engine.pause_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/signal/bots/{bot_id}/resume")
+async def signal_resume(bot_id: str) -> dict:
+    return signal_engine.resume_bot(bot_id).snapshot()
+
+
+@app.post("/api/signal/bots/{bot_id}/stop")
+async def signal_stop(bot_id: str) -> dict:
+    try:
+        return signal_engine.stop_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/paper/buy")
@@ -1010,6 +1106,7 @@ async def analytics_portfolio_comparison() -> dict:
 async def monitoring_status() -> dict:
     grid_bots_state = list(grid_engine.bots.values())
     dca_bots_state = list(dca_engine.bots.values())
+    signal_bots_state = list(signal_engine.bots.values())
     return {
         "market_data": {
             "status": "ONLINE" if market_health["last_success_at"] and not market_health["last_error"] else "DEGRADED",
@@ -1024,6 +1121,11 @@ async def monitoring_status() -> dict:
             "running": sum(bot.status == "RUNNING" for bot in dca_bots_state),
             "paused": sum(bot.status == "PAUSED" for bot in dca_bots_state),
             "errors": sum(bot.consecutive_errors for bot in dca_bots_state),
+        },
+        "signal": {
+            "running": sum(bot.status == "RUNNING" for bot in signal_bots_state),
+            "paused": sum(bot.status == "PAUSED" for bot in signal_bots_state),
+            "errors": sum(bot.consecutive_errors for bot in signal_bots_state),
         },
     }
 

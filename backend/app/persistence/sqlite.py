@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -149,6 +150,10 @@ class SQLiteStore:
                     message TEXT NOT NULL,
                     UNIQUE(bot_id, sequence)
                 );
+                CREATE TABLE IF NOT EXISTS signal_bots (
+                    id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS notification_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -191,7 +196,7 @@ class SQLiteStore:
                     ON market_signal_observations(symbol, observed_at);
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 5 WHERE version < 5;
+                UPDATE schema_version SET version = 6 WHERE version < 6;
             """)
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
@@ -378,6 +383,30 @@ class SQLiteStore:
     def clear_dca_bots(self) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM dca_bots")
+
+    def load_signal_bots(self):
+        from app.signal.execution import SignalBotState, SignalEvent
+
+        bots = {}
+        with self.connect() as db:
+            for row in db.execute("SELECT state_json FROM signal_bots"):
+                values = json.loads(row["state_json"])
+                values["events"] = [SignalEvent(**event) for event in values.get("events", [])]
+                bot = SignalBotState(**values)
+                bots[bot.id] = bot
+        return bots
+
+    def save_signal_bot(self, bot) -> None:
+        from dataclasses import asdict
+
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO signal_bots(id, state_json) VALUES (?, ?)", (
+                bot.id, json.dumps(asdict(bot), ensure_ascii=False),
+            ))
+
+    def clear_signal_bots(self) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM signal_bots")
 
     def get_notification_state(self, key: str, default: str = "") -> str:
         with self.connect() as db:
