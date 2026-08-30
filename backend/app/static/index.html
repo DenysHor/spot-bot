@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.20.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.21.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -64,6 +64,8 @@
             <label>Рівнів<input id="levels" type="number" value="4" min="1" max="50" required></label>
           </div>
           <label class="check-row"><input id="trailing-up" type="checkbox" checked><span>Trailing Up — підтягувати BUY-рівні за зростанням</span></label>
+          <button id="analyze-grid" class="ghost" type="button">Перевірити пару та бюджет</button>
+          <div id="grid-preflight" class="grid-preflight"><p>Перед запуском перевіримо ринок і портфельні ліміти.</p></div>
           <button type="submit">Запустити PAPER-бота</button>
           <p class="form-note">Угоди симулюються. Реальні кошти не використовуються.</p>
         </form>
@@ -140,6 +142,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.20.1"></script>
+  <script src="/static/app.js?v=0.21.0"></script>
 </body>
 </html>

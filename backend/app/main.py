@@ -123,6 +123,90 @@ async def ensure_active_quote_symbol(symbol: str) -> str:
     return normalized
 
 
+def automation_budget_status(symbol: str, requested_budget: float) -> dict:
+    active_grid = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
+    active_dca = [bot for bot in dca_engine.bots.values() if bot.status != "STOPPED"]
+    allocated = sum(bot.budget_quote for bot in active_grid) + sum(bot.budget_quote for bot in active_dca)
+    capital = max(portfolio.starting_quote, 0.0)
+    portfolio_cap = capital * settings.max_portfolio_allocation_pct / 100
+    pair_cap = capital * settings.max_position_pct / 100
+    reasons: list[str] = []
+    if any(bot.symbol == symbol for bot in active_grid):
+        reasons.append(f"Для {symbol} уже існує активний або призупинений Grid-бот")
+    if len(active_grid) >= settings.max_grid_bots:
+        reasons.append(f"Досягнуто ліміт {settings.max_grid_bots} Grid-ботів")
+    if requested_budget > pair_cap + 1e-9:
+        reasons.append(f"Бюджет однієї пари не може перевищувати {pair_cap:.2f} {settings.quote_asset}")
+    if allocated + requested_budget > portfolio_cap + 1e-9:
+        reasons.append(f"Сумарний бюджет автоматизацій не може перевищувати {portfolio_cap:.2f} {settings.quote_asset}")
+    return {
+        "allowed": not reasons,
+        "reasons": reasons,
+        "capital": capital,
+        "allocated_budget": allocated,
+        "requested_budget": requested_budget,
+        "remaining_after_start": max(0.0, portfolio_cap - allocated - requested_budget),
+        "portfolio_cap": portfolio_cap,
+        "portfolio_cap_pct": settings.max_portfolio_allocation_pct,
+        "pair_cap": pair_cap,
+        "pair_cap_pct": settings.max_position_pct,
+        "active_grid_bots": len(active_grid),
+        "max_grid_bots": settings.max_grid_bots,
+    }
+
+
+async def grid_preflight_analysis(request) -> dict:
+    symbol = await ensure_active_quote_symbol(request.symbol)
+    budget = automation_budget_status(symbol, request.budget_quote)
+    ticker, rows = await asyncio.gather(
+        market.ticker_24h(symbol), current_klines(symbol, interval="1h", limit=48),
+    )
+    ranges = [
+        (float(row[2]) - float(row[3])) / float(row[4]) * 100
+        for row in rows if float(row[4]) > 0
+    ]
+    average_range = sum(ranges) / len(ranges) if ranges else 0.0
+    quote_volume = float(ticker.get("quoteVolume", 0.0))
+    change_24h = float(ticker.get("priceChangePercent", 0.0))
+    recommended_step = round(min(5.0, max(0.35, average_range * 0.7)), 2)
+    recommended_levels = 6 if average_range >= 1.0 else 8
+    fee_drag_pct = round((broker.fee_rate * 2 * 100) / request.step_pct * 100, 1)
+    warnings: list[str] = []
+    if quote_volume < 1_000_000:
+        warnings.append("Низький добовий обсяг: можливі гірші умови виконання")
+    if request.step_pct < 0.35:
+        warnings.append("Крок надто близький до подвійної торгової комісії")
+    if abs(change_24h) >= 10:
+        warnings.append("За 24 години стався сильний рух ціни; параметри можуть швидко застаріти")
+    if request.step_pct < recommended_step * 0.6 or request.step_pct > recommended_step * 2:
+        warnings.append(f"Поточний крок відрізняється від орієнтира {recommended_step:.2f}%")
+    verdict = "BLOCKED" if not budget["allowed"] else "CAUTION" if warnings else "SUITABLE"
+    return {
+        "symbol": symbol,
+        "verdict": verdict,
+        "budget": budget,
+        "market": {
+            "price": float(ticker["lastPrice"]),
+            "change_24h_pct": change_24h,
+            "quote_volume_24h": quote_volume,
+            "average_hourly_range_pct": round(average_range, 3),
+            "liquidity": "HIGH" if quote_volume >= 10_000_000 else "MEDIUM" if quote_volume >= 1_000_000 else "LOW",
+        },
+        "parameters": {
+            "requested_step_pct": request.step_pct,
+            "fee_drag_pct_of_step": fee_drag_pct,
+            "recommended_step_pct": recommended_step,
+            "recommended_levels_each_side": recommended_levels,
+        },
+        "warnings": warnings,
+        "recommendation": (
+            "; ".join(budget["reasons"]) if not budget["allowed"]
+            else "Можна запускати в PAPER із підвищеною увагою до попереджень" if warnings
+            else "Пара та бюджет відповідають поточним PAPER-обмеженням"
+        ),
+    }
+
+
 grid_engine = GridExecutionEngine(
     broker=broker,
     price_provider=current_price,
@@ -155,7 +239,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.20.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.21.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -276,7 +360,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.20.1",
+        "version": "0.21.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -582,12 +666,27 @@ async def grid_bot(bot_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/grid/preflight")
+async def grid_preflight(request: GridStartRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Grid preflight is available for PAPER mode only")
+    try:
+        return await grid_preflight_analysis(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Grid preflight failed: {exc}") from exc
+
+
 @app.post("/api/grid/bots/start")
 async def grid_start(request: GridStartRequest) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="Grid execution v0.3 is PAPER-only")
     try:
         symbol = await ensure_active_quote_symbol(request.symbol)
+        budget_status = automation_budget_status(symbol, request.budget_quote)
+        if not budget_status["allowed"]:
+            raise ValueError("; ".join(budget_status["reasons"]))
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
         bot = grid_engine.start_bot(
