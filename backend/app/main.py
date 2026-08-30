@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.20.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.20.1", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -165,10 +165,14 @@ async def require_authentication(request: Request, call_next):
     path = request.url.path
     public = path == "/" or path == "/health" or path.startswith("/static/") or path.startswith("/api/auth/")
     if not auth.enabled or public:
-        return await call_next(request)
-    if not auth.verify_token(request.cookies.get(auth.cookie_name)):
-        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
-    return await call_next(request)
+        response = await call_next(request)
+    elif not auth.verify_token(request.cookies.get(auth.cookie_name)):
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+    else:
+        response = await call_next(request)
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    return response
 
 
 class PaperBuyRequest(BaseModel):
@@ -272,7 +276,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.20.0",
+        "version": "0.20.1",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",

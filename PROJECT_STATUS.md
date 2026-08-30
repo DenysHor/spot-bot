@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.20.0`
-Current implementation: searchable Binance pairs and per-bot dashboard workspaces
+Current version: `0.20.1`
+Current implementation: searchable Binance pairs, per-bot dashboard workspaces, and reliable static asset refreshes
 
 ## Non-negotiable safety rules
 

@@ -14,7 +14,11 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
+    assert "/static/styles.css?v=0.20.1" in page.text
+    assert "/static/app.js?v=0.20.1" in page.text
+    assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
+    assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert "/api/backtest/grid" in script.text
     assert "/api/dca/bots/start" in script.text
     assert "/api/backtest/grid/optimize" in script.text
@@ -36,6 +40,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "symbol-options" in page.text
     assert "SOLUSDT" in page.text
     assert styles.status_code == 200
+    assert styles.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert "--green" in styles.text
 
 
