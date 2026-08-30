@@ -99,3 +99,45 @@ def test_grid_with_open_sell_must_be_paused_not_stopped():
         assert "pause" in str(exc).lower()
     engine.pause_bot(bot.id)
     assert bot.status == "PAUSED"
+
+
+def test_trailing_up_recenters_unfilled_buys_without_exceeding_level_count():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 1.0, 4, trailing_up_enabled=True)
+
+    asyncio.run(engine.tick_bot(bot.id, price=101.9))
+    assert bot.recenter_count == 0
+    asyncio.run(engine.tick_bot(bot.id, price=102.0))
+
+    buys = sorted((order.trigger_price for order in bot.open_orders if order.side == "BUY"), reverse=True)
+    assert bot.recenter_count == 1
+    assert bot.reference_price == 102.0
+    assert len(buys) == 4
+    assert round(buys[0], 8) == round(102.0 * 0.99, 8)
+    assert bot.events[-1].event == "GRID_RECENTERED"
+    assert portfolio.trades == []
+
+
+def test_trailing_up_preserves_open_sell_and_total_level_count():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 10.0, 4, trailing_up_enabled=True)
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    sell = next(order for order in bot.open_orders if order.side == "SELL")
+    asyncio.run(engine.tick_bot(bot.id, price=120.0))
+
+    # The SELL may fill at 120; any replacement BUY is safely rebuilt around the new anchor.
+    assert bot.recenter_count == 1
+    assert len(bot.open_orders) == bot.levels_each_side
+    assert sell not in bot.open_orders

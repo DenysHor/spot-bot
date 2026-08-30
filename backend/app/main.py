@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.16.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.17.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -160,7 +160,11 @@ class GridPlanRequest(BaseModel):
 
 
 class GridStartRequest(GridPlanRequest):
-    pass
+    trailing_up_enabled: bool = False
+
+
+class GridTrailingRequest(BaseModel):
+    enabled: bool
 
 
 class GridBacktestRequest(GridPlanRequest):
@@ -239,7 +243,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.16.0",
+        "version": "0.17.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -521,12 +525,23 @@ async def grid_start(request: GridStartRequest) -> dict:
             budget_quote=request.budget_quote,
             step_pct=request.step_pct,
             levels_each_side=request.levels_each_side,
+            trailing_up_enabled=request.trailing_up_enabled,
         )
         return bot.snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid start failed: {exc}") from exc
+
+
+@app.post("/api/grid/bots/{bot_id}/trailing-up")
+async def grid_trailing_up(bot_id: str, request: GridTrailingRequest) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Trailing Up is PAPER-only")
+    try:
+        return grid_engine.set_trailing_up(bot_id, request.enabled).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/grid/bots/{bot_id}/stop")

@@ -17,7 +17,7 @@ def test_portfolio_and_grid_state_restore_after_restart(tmp_path):
     portfolio = PaperPortfolio(starting_quote=10_000, store=store)
     broker = PaperBroker(portfolio)
     engine = GridExecutionEngine(broker, fake_price, store=store)
-    bot = engine.start_bot("BTCUSDT", "BTC", 100, 1_000, 10, 2)
+    bot = engine.start_bot("BTCUSDT", "BTC", 100, 1_000, 10, 2, trailing_up_enabled=True)
 
     asyncio.run(engine.tick_bot(bot.id, price=90))
     original_trade = portfolio.trades[0]
@@ -39,6 +39,8 @@ def test_portfolio_and_grid_state_restore_after_restart(tmp_path):
     assert restored_bot.spent_quote == bot.spent_quote
     assert restored_bot.open_orders == original_orders
     assert restored_bot.events == original_events
+    assert restored_bot.trailing_up_enabled is True
+    assert restored_bot.recenter_count == bot.recenter_count
 
 
 def test_automatic_buy_is_blocked_by_risk_limits(tmp_path):

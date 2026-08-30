@@ -52,6 +52,10 @@ class GridBotState:
     last_success_at: str = ""
     consecutive_errors: int = 0
     paused_reason: str = ""
+    trailing_up_enabled: bool = False
+    trailing_trigger_steps: float = 2.0
+    recenter_count: int = 0
+    last_recenter_at: str = ""
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
@@ -107,6 +111,7 @@ class GridExecutionEngine:
         budget_quote: float,
         step_pct: float,
         levels_each_side: int,
+        trailing_up_enabled: bool = False,
     ) -> GridBotState:
         symbol = symbol.upper()
         if any(bot.symbol == symbol and bot.status == "RUNNING" for bot in self.bots.values()):
@@ -141,15 +146,60 @@ class GridExecutionEngine:
             quote_per_level=quote_per_level,
             created_at=self._now(),
             last_price=reference_price,
+            trailing_up_enabled=trailing_up_enabled,
             open_orders=orders,
         )
         bot.events.append(GridEvent(
             timestamp=self._now(), event="BOT_STARTED", price=reference_price,
-            message=f"Grid started with {levels_each_side} BUY levels",
+            message=(f"Grid started with {levels_each_side} BUY levels; "
+                     f"Trailing Up {'enabled' if trailing_up_enabled else 'disabled'}"),
         ))
         self.bots[bot.id] = bot
         self._persist(bot)
         return bot
+
+    def set_trailing_up(self, bot_id: str, enabled: bool) -> GridBotState:
+        bot = self.get_bot(bot_id)
+        if bot.status == "STOPPED":
+            raise ValueError("Trailing Up cannot be changed for a stopped Grid bot")
+        bot.trailing_up_enabled = enabled
+        bot.events.append(GridEvent(
+            timestamp=self._now(), event="TRAILING_UP_ENABLED" if enabled else "TRAILING_UP_DISABLED",
+            price=bot.last_price,
+            message=("Unfilled BUY levels will follow upward moves"
+                     if enabled else "BUY levels remain at their current prices"),
+        ))
+        self._persist(bot)
+        return bot
+
+    def _recenter_buys_up(self, bot: GridBotState, current: float) -> None:
+        """Move only unfilled BUY levels up; never touch acquired inventory or SELLs."""
+        if not bot.trailing_up_enabled:
+            return
+        step = bot.step_pct / 100.0
+        trigger = bot.reference_price * (1 + step * bot.trailing_trigger_steps)
+        if current < trigger:
+            return
+        buy_orders = [order for order in bot.open_orders if order.side == "BUY"]
+        if not buy_orders:
+            return
+        sell_count = sum(order.side == "SELL" for order in bot.open_orders)
+        target_buy_count = max(0, bot.levels_each_side - sell_count)
+        bot.open_orders = [order for order in bot.open_orders if order.side != "BUY"]
+        for level in range(1, target_buy_count + 1):
+            bot.open_orders.append(GridOrder(
+                id=uuid4().hex[:12], side="BUY",
+                trigger_price=current * (1 - step * level), quote_amount=bot.quote_per_level,
+            ))
+        previous_reference = bot.reference_price
+        bot.reference_price = current
+        bot.recenter_count += 1
+        bot.last_recenter_at = self._now()
+        bot.events.append(GridEvent(
+            timestamp=bot.last_recenter_at, event="GRID_RECENTERED", price=current,
+            message=(f"Trailing Up shifted {target_buy_count} BUY levels from anchor "
+                     f"{previous_reference:.8f} to {current:.8f}"),
+        ))
 
     def stop_bot(self, bot_id: str) -> GridBotState:
         bot = self.get_bot(bot_id)
@@ -225,6 +275,8 @@ class GridExecutionEngine:
         bot.last_price = current
         bot.last_success_at = self._now()
         bot.consecutive_errors = 0
+
+        self._recenter_buys_up(bot, current)
 
         # Process BUYs from highest trigger downward, allowing gap moves to fill several levels.
         buys = sorted(

@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.16.0`
-Current implementation: evidence-gated PAPER readiness and GitHub Actions CI
+Current version: `0.17.0`
+Current implementation: bounded PAPER Trailing Up with evidence-gated readiness and CI
 
 ## Non-negotiable safety rules
 
@@ -67,6 +67,9 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Transparent P&L, drawdown, profit factor, win rate, excess-return, and fee-drag criteria.
 - Weekly Telegram evaluation with no automatic parameter changes or LIVE promotion.
 - GitHub Actions runs the backend test suite for pushes and pull requests.
+- Optional Trailing Up recenters only unfilled BUY levels after price rises by two grid steps.
+- Trailing Up never changes the budget or level cap and never moves an open paired SELL.
+- Existing running bots can enable or disable Trailing Up from their dashboard card.
 
 ## Local setup on a new Windows computer
 
@@ -103,7 +106,7 @@ Preserve unrelated user changes. Use small commits, run the full test suite, and
 5. Verify `/health` reports the new version.
 6. Hard-refresh the dashboard and confirm Market data, Telegram, and the running bot state.
 
-## Current validation milestone: v0.16
+## Current validation milestone: v0.17
 
 The evidence-based PAPER readiness gate is implemented without changing trading parameters automatically:
 
@@ -114,6 +117,8 @@ The evidence-based PAPER readiness gate is implemented without changing trading 
 - Recommendations limited to continue, stop, or start a separate PAPER experiment.
 - GitHub Actions test workflow before Railway deployment.
 
-Possible next milestone: manage separate named PAPER experiments so parameter variants never mix their evidence.
+Trailing Up is intentionally conservative: it moves pending BUY levels closer to a rising market but does not chase with an immediate market BUY. Its recenter events and results must be evaluated in PAPER before considering a separate capped trend allocation.
+
+Possible next milestone: manage separate named PAPER experiments so the fixed Grid and Trailing Up evidence never mix.
 
 Do not interpret one or a few profitable cycles as evidence that the strategy is ready for real funds.

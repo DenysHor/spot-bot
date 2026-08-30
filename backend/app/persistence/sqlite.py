@@ -168,6 +168,10 @@ class SQLiteStore:
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "grid_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "grid_bots", "trailing_up_enabled", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "trailing_trigger_steps", "REAL NOT NULL DEFAULT 2.0")
+            self._ensure_column(db, "grid_bots", "recenter_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(db, "grid_bots", "last_recenter_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
@@ -223,7 +227,9 @@ class SQLiteStore:
         bots: dict[str, GridBotState] = {}
         with self.connect() as db:
             for row in db.execute("SELECT * FROM grid_bots ORDER BY created_at"):
-                bot = GridBotState(**dict(row))
+                values = dict(row)
+                values["trailing_up_enabled"] = bool(values["trailing_up_enabled"])
+                bot = GridBotState(**values)
                 bot.open_orders = [GridOrder(**{k: v for k, v in dict(order).items() if k != "bot_id"})
                                    for order in db.execute("SELECT * FROM grid_orders WHERE bot_id = ?", (bot.id,))]
                 bot.events = [GridEvent(**{k: v for k, v in dict(event).items() if k not in {"id", "bot_id", "sequence"}})
@@ -233,12 +239,19 @@ class SQLiteStore:
 
     def save_bot(self, bot: "GridBotState") -> None:
         with self.connect() as db:
-            db.execute("""INSERT OR REPLACE INTO grid_bots VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            db.execute("""INSERT OR REPLACE INTO grid_bots
+                (id, symbol, base_asset, status, reference_price, budget_quote, step_pct,
+                 levels_each_side, quote_per_level, created_at, last_price, spent_quote,
+                 realized_pnl, completed_cycles, last_success_at, consecutive_errors,
+                 paused_reason, trailing_up_enabled, trailing_trigger_steps, recenter_count,
+                 last_recenter_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.reference_price,
                 bot.budget_quote, bot.step_pct, bot.levels_each_side, bot.quote_per_level,
                 bot.created_at, bot.last_price, bot.spent_quote, bot.realized_pnl, bot.completed_cycles,
                 bot.last_success_at, bot.consecutive_errors, bot.paused_reason,
+                bot.trailing_up_enabled, bot.trailing_trigger_steps, bot.recenter_count,
+                bot.last_recenter_at,
             ))
             db.execute("DELETE FROM grid_orders WHERE bot_id = ?", (bot.id,))
             db.executemany("INSERT INTO grid_orders VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
