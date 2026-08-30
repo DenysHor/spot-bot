@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.22.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.23.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -27,6 +27,16 @@
 
   <main>
     <nav id="dashboard-tabs" class="dashboard-tabs"><button class="active" type="button">Огляд</button></nav>
+
+    <section class="panel scanner-panel scanner-only">
+      <div class="panel-head">
+        <div><p class="eyebrow">BINANCE MARKET SCANNER</p><h2>Топ-50 Spot USDT-пар</h2></div>
+        <div class="scanner-actions"><select id="scanner-filter"><option value="ALL">Усі сигнали</option><option value="PAPER_CANDIDATE">PAPER-кандидати</option><option value="WATCH">Спостерігати</option><option value="OVERHEATED">Перегріті</option><option value="SKIP">Пропустити</option></select><button id="scanner-refresh" class="ghost" type="button">Оновити</button></div>
+      </div>
+      <div id="scanner-summary" class="scanner-summary"><p class="empty">Відкрийте вкладку, щоб завантажити аналіз.</p></div>
+      <div id="market-scanner" class="scanner-table"></div>
+      <p class="form-note scanner-disclaimer">Сигнали призначені лише для відбору PAPER-кандидатів. Вони не гарантують зростання та не запускають угоди автоматично.</p>
+    </section>
 
     <section id="overview-summary" class="panel overview-summary overview-only">
       <div class="panel-head"><div><p class="eyebrow">PORTFOLIO OVERVIEW</p><h2>Активні Grid-боти</h2></div></div>
@@ -148,6 +158,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.22.0"></script>
+  <script src="/static/app.js?v=0.23.0"></script>
 </body>
 </html>

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.backtest.grid import GridBacktester
 from app.analytics.performance import grid_performance
 from app.analytics.readiness import strategy_readiness
+from app.analytics.scanner import analyze_symbol, is_scannable_base
 from app.core.config import settings
 from app.core.auth import SessionAuth, validate_cloud_security
 from app.core.errors import describe_exception
@@ -46,6 +47,8 @@ backtester = GridBacktester(fee_rate=0.001)
 market_health = {"last_success_at": "", "last_error": ""}
 symbol_catalog_cache = {"expires_at": datetime.min.replace(tzinfo=timezone.utc), "symbols": []}
 symbol_catalog_lock = asyncio.Lock()
+market_scanner_cache = {"expires_at": datetime.min.replace(tzinfo=timezone.utc), "result": None}
+market_scanner_lock = asyncio.Lock()
 logger = logging.getLogger(__name__)
 risk_manager = RiskManager(RiskLimits(
     max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
@@ -121,6 +124,53 @@ async def ensure_active_quote_symbol(symbol: str) -> str:
     if normalized not in {item["symbol"] for item in await active_quote_symbols()}:
         raise ValueError(f"{normalized} is not an active Binance Spot {settings.quote_asset} pair")
     return normalized
+
+
+async def scan_top_quote_pairs() -> dict:
+    now = datetime.now(timezone.utc)
+    cached = market_scanner_cache["result"]
+    if cached is not None and now < market_scanner_cache["expires_at"]:
+        return cached
+    async with market_scanner_lock:
+        now = datetime.now(timezone.utc)
+        cached = market_scanner_cache["result"]
+        if cached is not None and now < market_scanner_cache["expires_at"]:
+            return cached
+        catalog = await active_quote_symbols()
+        catalog_by_symbol = {item["symbol"]: item for item in catalog if is_scannable_base(item["base_asset"])}
+        tickers = await market.ticker_24h()
+        liquid = sorted([
+            ticker for ticker in tickers
+            if ticker.get("symbol") in catalog_by_symbol
+            and float(ticker.get("quoteVolume", 0.0)) > 0
+        ], key=lambda ticker: float(ticker.get("quoteVolume", 0.0)), reverse=True)[:50]
+        semaphore = asyncio.Semaphore(8)
+
+        async def analyze(ticker: dict):
+            async with semaphore:
+                try:
+                    rows = await market.klines(ticker["symbol"], interval="4h", limit=60)
+                    return analyze_symbol(ticker, rows, catalog_by_symbol[ticker["symbol"]]["base_asset"])
+                except Exception as exc:
+                    logger.warning("Market scanner skipped %s: %s", ticker.get("symbol"), describe_exception(exc))
+                    return None
+
+        analyzed = [item for item in await asyncio.gather(*(analyze(ticker) for ticker in liquid)) if item]
+        analyzed.sort(key=lambda item: (item["score"], item["quote_volume_24h"]), reverse=True)
+        for rank, item in enumerate(analyzed, start=1):
+            item["scanner_rank"] = rank
+        result = {
+            "generated_at": now.isoformat(), "refresh_after_seconds": 900,
+            "universe": "Top 50 active Binance Spot USDT pairs by 24h quote volume",
+            "analyzed_count": len(analyzed),
+            "paper_candidates": sum(item["signal"] == "PAPER_CANDIDATE" for item in analyzed),
+            "items": analyzed,
+            "disclaimer": "Signals are deterministic market observations for PAPER research, not financial advice.",
+        }
+        market_health["last_success_at"] = PaperPortfolio.now_iso()
+        market_health["last_error"] = ""
+        market_scanner_cache.update({"result": result, "expires_at": now + timedelta(minutes=15)})
+        return result
 
 
 def automation_budget_status(symbol: str, requested_budget: float) -> dict:
@@ -239,7 +289,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.22.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.23.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -360,7 +410,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.22.0",
+        "version": "0.23.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -387,6 +437,14 @@ async def market_symbol_search(query: str = "", limit: int = 20) -> dict:
         return {"query": normalized, "quote_asset": settings.quote_asset, "symbols": matches[:limit]}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Binance symbol catalog error: {exc}") from exc
+
+
+@app.get("/api/market/scanner")
+async def market_scanner() -> dict:
+    try:
+        return await scan_top_quote_pairs()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Binance market scanner error: {exc}") from exc
 
 
 @app.get("/api/market/{symbol}")

@@ -32,8 +32,9 @@ class BinancePublicClient:
             {"symbol": symbol.upper(), "interval": interval, "limit": limit},
         )
 
-    async def ticker_24h(self, symbol: str) -> dict[str, Any]:
-        return await self._get("/api/v3/ticker/24hr", {"symbol": symbol.upper()})
+    async def ticker_24h(self, symbol: str | None = None) -> Any:
+        params = {"symbol": symbol.upper()} if symbol else None
+        return await self._get("/api/v3/ticker/24hr", params)
 
     async def exchange_info(self) -> dict[str, Any]:
         return await self._get("/api/v3/exchangeInfo")

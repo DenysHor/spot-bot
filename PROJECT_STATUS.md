@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.22.0`
-Current implementation: cross-bot comparison, evidence-gated ranking, and health alerts
+Current version: `0.23.0`
+Current implementation: explainable top-50 Binance USDT PAPER market scanner
 
 ## Non-negotiable safety rules
 
