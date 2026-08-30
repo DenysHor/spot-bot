@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.17.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.18.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -26,6 +26,9 @@ Binance Spot trading manager with three execution modes:
 - Optional PAPER-only Trailing Up that recenters unfilled BUY levels after a two-step upward breakout
 - Existing inventory and paired SELL levels remain untouched during a Trailing Up recenter
 - Per-bot Trailing Up toggle, recenter counter, events, and restart-safe SQLite state
+- Three-per-day Trailing Up safety cap with automatic UTC-day reset
+- Telegram alerts for recentering and reaching the daily recenter cap
+- Dashboard anchor, next trigger, last recenter, daily usage, and post-recenter analytics
 - Per-grid realized cycle P&L and completed-cycle count
 - Configurable market polling interval (`GRID_POLL_SECONDS`, default 5 sec)
 - One running grid bot per symbol in v0.3 to prevent position conflicts

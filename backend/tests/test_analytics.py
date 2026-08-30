@@ -70,3 +70,18 @@ def test_readiness_age_uses_active_bot_creation_not_rolling_window_event():
 
     assert result["elapsed_hours"] == 240
     assert result["active_since"] == (now - timedelta(days=7)).isoformat()
+
+
+def test_trailing_metrics_measure_cycles_after_first_recenter():
+    now = datetime(2026, 1, 8, 12, tzinfo=timezone.utc)
+    bot = SimpleNamespace(symbol="SOLUSDT", budget_quote=1000.0, events=[
+        GridEvent((now - timedelta(hours=3)).isoformat(), "SELL_FILLED", 100, realized_cycle_pnl=0.4),
+        GridEvent((now - timedelta(hours=2)).isoformat(), "GRID_RECENTERED", 102),
+        GridEvent((now - timedelta(hours=1)).isoformat(), "SELL_FILLED", 103, realized_cycle_pnl=0.6),
+    ])
+
+    metrics = grid_performance([], {"bot": bot}, 7, "SOLUSDT", now)["metrics"]
+
+    assert metrics["trailing_recenters"] == 1
+    assert metrics["post_recenter_cycles"] == 1
+    assert metrics["post_recenter_pnl"] == 0.6

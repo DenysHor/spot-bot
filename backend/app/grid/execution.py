@@ -56,11 +56,17 @@ class GridBotState:
     trailing_trigger_steps: float = 2.0
     recenter_count: int = 0
     last_recenter_at: str = ""
+    recenter_day: str = ""
+    recenter_count_today: int = 0
+    max_recenters_per_day: int = 3
+    recenter_limit_event_day: str = ""
     open_orders: list[GridOrder] = field(default_factory=list)
     events: list[GridEvent] = field(default_factory=list)
 
     def snapshot(self) -> dict:
         result = asdict(self)
+        today = datetime.now(timezone.utc).date().isoformat()
+        result["recenter_count_today"] = self.recenter_count_today if self.recenter_day == today else 0
         sell_orders = [order for order in self.open_orders if order.side == "SELL"]
         result["open_exposure_quote"] = sum(order.source_buy_cost for order in sell_orders)
         result["unrealized_pnl"] = sum(
@@ -70,6 +76,11 @@ class GridBotState:
         result["total_pnl"] = self.realized_pnl + result["unrealized_pnl"]
         result["open_buy_orders"] = sum(1 for x in self.open_orders if x.side == "BUY")
         result["open_sell_orders"] = sum(1 for x in self.open_orders if x.side == "SELL")
+        step = self.step_pct / 100.0
+        result["next_recenter_price"] = (
+            self.reference_price * (1 + step * self.trailing_trigger_steps)
+            if self.trailing_up_enabled else None
+        )
         return result
 
 
@@ -180,6 +191,19 @@ class GridExecutionEngine:
         trigger = bot.reference_price * (1 + step * bot.trailing_trigger_steps)
         if current < trigger:
             return
+        today = datetime.now(timezone.utc).date().isoformat()
+        if bot.recenter_day != today:
+            bot.recenter_day = today
+            bot.recenter_count_today = 0
+            bot.recenter_limit_event_day = ""
+        if bot.recenter_count_today >= bot.max_recenters_per_day:
+            if bot.recenter_limit_event_day != today:
+                bot.recenter_limit_event_day = today
+                bot.events.append(GridEvent(
+                    timestamp=self._now(), event="RECENTER_LIMIT_REACHED", price=current,
+                    message=f"Daily Trailing Up limit reached: {bot.max_recenters_per_day}",
+                ))
+            return
         buy_orders = [order for order in bot.open_orders if order.side == "BUY"]
         if not buy_orders:
             return
@@ -194,6 +218,7 @@ class GridExecutionEngine:
         previous_reference = bot.reference_price
         bot.reference_price = current
         bot.recenter_count += 1
+        bot.recenter_count_today += 1
         bot.last_recenter_at = self._now()
         bot.events.append(GridEvent(
             timestamp=bot.last_recenter_at, event="GRID_RECENTERED", price=current,

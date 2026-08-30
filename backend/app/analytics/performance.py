@@ -21,6 +21,17 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
         for event in bot.events
         if event.event == "SELL_FILLED" and _parse(event.timestamp) >= start
     ]
+    recenter_events = sorted([
+        event
+        for bot in matching_bots
+        for event in bot.events
+        if event.event == "GRID_RECENTERED" and _parse(event.timestamp) >= start
+    ], key=lambda item: _parse(item.timestamp))
+    first_recenter_at = _parse(recenter_events[0].timestamp) if recenter_events else None
+    post_recenter_cycles = [
+        event for event in cycle_events
+        if first_recenter_at is not None and _parse(event.timestamp) >= first_recenter_at
+    ]
     realized = sum(event.realized_cycle_pnl for event in cycle_events)
     fees = sum(trade.fee_quote for trade in filtered_trades)
     volume = sum(trade.quote_amount for trade in filtered_trades)
@@ -87,6 +98,9 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
             "realized_max_drawdown": max_drawdown,
             "realized_max_drawdown_pct": max_drawdown / allocated_budget * 100 if allocated_budget else 0.0,
             "profit_factor": positive_pnl / negative_pnl if negative_pnl else None,
+            "trailing_recenters": len(recenter_events),
+            "post_recenter_cycles": len(post_recenter_cycles),
+            "post_recenter_pnl": sum(event.realized_cycle_pnl for event in post_recenter_cycles),
         },
         "series": series,
     }

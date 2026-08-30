@@ -141,3 +141,25 @@ def test_trailing_up_preserves_open_sell_and_total_level_count():
     assert bot.recenter_count == 1
     assert len(bot.open_orders) == bot.levels_each_side
     assert sell not in bot.open_orders
+
+
+def test_trailing_up_stops_at_daily_recenter_limit():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 1.0, 4, trailing_up_enabled=True)
+    for price in (102.0, 104.04, 106.1208):
+        asyncio.run(engine.tick_bot(bot.id, price=price))
+
+    capped_anchor = bot.reference_price
+    asyncio.run(engine.tick_bot(bot.id, price=108.5))
+    asyncio.run(engine.tick_bot(bot.id, price=109.0))
+
+    assert bot.recenter_count_today == 3
+    assert bot.reference_price == capped_anchor
+    assert sum(event.event == "RECENTER_LIMIT_REACHED" for event in bot.events) == 1
+    assert bot.snapshot()["next_recenter_price"] > capped_anchor

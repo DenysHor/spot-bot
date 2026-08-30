@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.17.0`
-Current implementation: bounded PAPER Trailing Up with evidence-gated readiness and CI
+Current version: `0.18.0`
+Current implementation: monitored and daily-capped PAPER Trailing Up
 
 ## Non-negotiable safety rules
 
@@ -70,6 +70,9 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Optional Trailing Up recenters only unfilled BUY levels after price rises by two grid steps.
 - Trailing Up never changes the budget or level cap and never moves an open paired SELL.
 - Existing running bots can enable or disable Trailing Up from their dashboard card.
+- Trailing Up is capped at three recenters per UTC day and resets automatically the next day.
+- Telegram reports every recenter and the first daily limit event.
+- Dashboard shows anchor price, next recenter trigger, last recenter time, daily usage, and post-recenter results.
 
 ## Local setup on a new Windows computer
 
@@ -106,7 +109,7 @@ Preserve unrelated user changes. Use small commits, run the full test suite, and
 5. Verify `/health` reports the new version.
 6. Hard-refresh the dashboard and confirm Market data, Telegram, and the running bot state.
 
-## Current validation milestone: v0.17
+## Current validation milestone: v0.18
 
 The evidence-based PAPER readiness gate is implemented without changing trading parameters automatically:
 

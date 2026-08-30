@@ -46,6 +46,30 @@ def test_notifier_sends_only_new_important_events():
     assert "100.0000 USDT" in sent[0]
 
 
+def test_notifier_sends_trailing_recenter_event():
+    sent = []
+
+    async def sender(text):
+        sent.append(text)
+
+    bot = SimpleNamespace(id="bot1", symbol="SOLUSDT", events=[])
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={bot.id: bot}),
+        SimpleNamespace(bots={}), sender=sender,
+    )
+    notifier.seed_existing()
+    bot.events.append(GridEvent(
+        "later", "GRID_RECENTERED", 105.0,
+        message="Trailing Up shifted 8 BUY levels from anchor 100.0 to 105.0",
+    ))
+
+    asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
+
+    assert len(sent) == 1
+    assert "GRID_RECENTERED · SOLUSDT" in sent[0]
+    assert "shifted 8 BUY levels" in sent[0]
+
+
 def test_cursors_and_daily_report_survive_restart():
     sent = []
 
