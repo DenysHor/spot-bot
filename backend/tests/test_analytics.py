@@ -85,3 +85,29 @@ def test_trailing_metrics_measure_cycles_after_first_recenter():
     assert metrics["trailing_recenters"] == 1
     assert metrics["post_recenter_cycles"] == 1
     assert metrics["post_recenter_pnl"] == 0.6
+
+
+def test_grid_health_marks_bot_idle_after_48_hours():
+    now = datetime(2026, 1, 10, 12, tzinfo=timezone.utc)
+    bot = SimpleNamespace(
+        created_at=(now - timedelta(hours=49)).isoformat(), events=[], status="RUNNING",
+        consecutive_errors=0, recenter_count_today=0, max_recenters_per_day=3,
+        paused_reason="",
+    )
+
+    health = main.grid_bot_health(bot, now)
+
+    assert health["code"] == "IDLE"
+    assert health["needs_attention"] is True
+    assert health["idle_hours"] == 49
+
+
+def test_grid_health_prefers_error_signal_over_idle():
+    now = datetime(2026, 1, 10, 12, tzinfo=timezone.utc)
+    bot = SimpleNamespace(
+        created_at=(now - timedelta(days=3)).isoformat(), events=[], status="RUNNING",
+        consecutive_errors=2, recenter_count_today=0, max_recenters_per_day=3,
+        paused_reason="",
+    )
+
+    assert main.grid_bot_health(bot, now)["code"] == "ERROR"

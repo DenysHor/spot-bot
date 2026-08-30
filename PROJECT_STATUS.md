@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.21.0`
-Current implementation: portfolio guardrails and market preflight for new Grid bots
+Current version: `0.22.0`
+Current implementation: cross-bot comparison, evidence-gated ranking, and health alerts
 
 ## Non-negotiable safety rules
 

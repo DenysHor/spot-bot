@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.21.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.22.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -39,6 +39,12 @@
       <article><span>Вільний USDT</span><strong id="quote-balance">—</strong></article>
       <article><span>Realized P&amp;L</span><strong id="realized-pnl">—</strong></article>
       <article><span>Сплачені комісії</span><strong id="fees">—</strong></article>
+    </section>
+
+    <section class="panel comparison-panel overview-only">
+      <div class="panel-head"><div><p class="eyebrow">BOT COMPARISON</p><h2>Порівняння та сигнали уваги</h2></div><span id="comparison-summary" class="form-note">Завантаження…</span></div>
+      <div id="bot-comparison" class="comparison-table"><p class="empty">Завантаження порівняння…</p></div>
+      <p class="form-note comparison-note">Рейтинг активується окремо для кожного бота після 7 днів і 20 завершених циклів.</p>
     </section>
 
     <section class="grid-layout">
@@ -142,6 +148,6 @@
     </section>
   </main>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.21.0"></script>
+  <script src="/static/app.js?v=0.22.0"></script>
 </body>
 </html>

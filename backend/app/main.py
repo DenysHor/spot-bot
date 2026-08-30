@@ -239,7 +239,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.21.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.22.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -360,7 +360,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.21.0",
+        "version": "0.22.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -751,6 +751,66 @@ async def grid_tick(bot_id: str) -> dict:
         raise HTTPException(status_code=502, detail=f"Grid tick failed: {exc}") from exc
 
 
+def grid_bot_health(bot, now: datetime | None = None) -> dict:
+    current = now or datetime.now(timezone.utc)
+    created = datetime.fromisoformat(bot.created_at.replace("Z", "+00:00"))
+    fill_times = [
+        datetime.fromisoformat(event.timestamp.replace("Z", "+00:00"))
+        for event in bot.events if event.event in {"BUY_FILLED", "SELL_FILLED"}
+    ]
+    last_activity = max(fill_times, default=created)
+    idle_hours = max(0.0, (current - last_activity).total_seconds() / 3600)
+    if bot.status == "PAUSED":
+        code, label, message = "PAUSED", "Потребує уваги", bot.paused_reason or "Бот призупинений"
+    elif bot.consecutive_errors:
+        code, label, message = "ERROR", "Помилка", f"Помилок поспіль: {bot.consecutive_errors}"
+    elif bot.recenter_count_today >= bot.max_recenters_per_day:
+        code, label, message = "TRAILING_LIMIT", "Потребує уваги", "Досягнуто добовий ліміт Trailing"
+    elif idle_hours >= 48:
+        code, label, message = "IDLE", "Немає угод", f"Без виконаних ордерів {idle_hours:.0f} год"
+    else:
+        code, label, message = "NORMAL", "Працює нормально", "Критичних сигналів немає"
+    return {
+        "code": code, "label": label, "message": message,
+        "idle_hours": round(idle_hours, 1), "last_fill_at": max(fill_times).isoformat() if fill_times else None,
+        "needs_attention": code != "NORMAL",
+    }
+
+
+def portfolio_comparison(now: datetime | None = None) -> dict:
+    current = now or datetime.now(timezone.utc)
+    rows = []
+    for bot in grid_engine.bots.values():
+        if bot.status == "STOPPED":
+            continue
+        performance = grid_performance(portfolio.trades, grid_engine.bots, 30, bot.symbol, now=current)
+        metrics = performance["metrics"]
+        elapsed_days = performance["elapsed_hours"] / 24
+        eligible = elapsed_days >= 7 and metrics["cycles"] >= 20
+        rows.append({
+            "bot_id": bot.id, "symbol": bot.symbol, "status": bot.status,
+            "budget_quote": bot.budget_quote, "total_pnl": bot.snapshot()["total_pnl"],
+            "realized_pnl": metrics["realized_pnl"], "fees": metrics["fees"],
+            "cycles": metrics["cycles"], "grid_return_pct": metrics["grid_return_pct"],
+            "exposure_quote": bot.snapshot()["open_exposure_quote"],
+            "elapsed_days": round(elapsed_days, 2), "eligible_for_ranking": eligible,
+            "rank": None, "health": grid_bot_health(bot, current),
+        })
+    ranked = sorted((row for row in rows if row["eligible_for_ranking"]), key=lambda row: row["grid_return_pct"], reverse=True)
+    for rank, row in enumerate(ranked, start=1):
+        row["rank"] = rank
+    return {
+        "minimum_days": 7, "minimum_cycles": 20,
+        "eligible_bots": len(ranked), "attention_count": sum(row["health"]["needs_attention"] for row in rows),
+        "bots": rows,
+    }
+
+
+@app.get("/api/analytics/portfolio-comparison")
+async def analytics_portfolio_comparison() -> dict:
+    return portfolio_comparison()
+
+
 @app.get("/api/monitoring/status")
 async def monitoring_status() -> dict:
     grid_bots_state = list(grid_engine.bots.values())
@@ -833,6 +893,28 @@ async def weekly_evaluation_message(symbol: str) -> str:
 
 
 notifier.weekly_report_provider = weekly_evaluation_message
+
+
+def telegram_health_alerts(now: datetime) -> list[dict]:
+    alerts = []
+    for bot in grid_engine.bots.values():
+        if bot.status == "STOPPED":
+            continue
+        health = grid_bot_health(bot, now)
+        if health["needs_attention"]:
+            alerts.append({
+                "key": f"{bot.id}:{health['code']}",
+                "message": "\n".join([
+                    "Spot Grid Lab · PAPER attention",
+                    f"{bot.symbol} · {health['label']}",
+                    health["message"],
+                    "Автоматичних змін параметрів не виконано.",
+                ]),
+            })
+    return alerts
+
+
+notifier.health_alert_provider = telegram_health_alerts
 
 
 @app.post("/api/notifications/test")

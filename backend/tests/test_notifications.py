@@ -133,3 +133,26 @@ def test_weekly_evaluation_is_sent_once_per_week():
 
     assert sum("Weekly evaluation" in message for message in sent) == 1
     assert store.state["weekly_report_week"] == "2026-W02"
+
+
+def test_health_attention_alert_is_sent_once_per_day():
+    sent = []
+
+    async def sender(text):
+        sent.append(text)
+
+    store = FakeStore()
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={}), SimpleNamespace(bots={}),
+        store=store, sender=sender,
+    )
+    notifier.health_alert_provider = lambda now: [{
+        "key": "bot1:IDLE", "message": "SOLUSDT · Немає угод 48 год",
+    }]
+    noon = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+
+    asyncio.run(notifier.scan_once(noon))
+    asyncio.run(notifier.scan_once(noon))
+
+    assert sent == ["SOLUSDT · Немає угод 48 год"]
+    assert store.state["health_alert:bot1:IDLE"] == "2026-01-01"
