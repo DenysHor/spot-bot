@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.15.1**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.16.0**. Automatic Grid and Smart DCA execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 
@@ -53,6 +53,9 @@ Binance Spot trading manager with three execution modes:
 - Actual 7/30-day Grid analytics with P&L curve, fees, cycles, win rate, volume and Buy & Hold comparison
 - Start-aligned benchmark, Grid return on allocated budget, excess return, realized drawdown and profit factor
 - Transient Binance price retry with typed Telegram errors and Railway traceback logging
+- Evidence-gated PAPER readiness with minimum 7 days and 20 completed cycles
+- Transparent readiness criteria, data progress, quality score and non-LIVE recommendations
+- Weekly Telegram strategy evaluation and GitHub Actions test workflow
 - API via FastAPI / Swagger
 - Unit tests for paper trading, grid planning and grid execution cycles
 

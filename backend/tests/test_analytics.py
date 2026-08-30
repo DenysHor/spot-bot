@@ -41,6 +41,7 @@ def test_analytics_endpoint_adds_buy_and_hold(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["buy_hold_return_pct"] == 10.0
+    assert response.json()["readiness"]["status"] in {"COLLECTING_DATA", "PASSED", "FAILED"}
 
 
 def test_risk_metrics_include_cycle_drawdown_and_profit_factor():
@@ -55,3 +56,17 @@ def test_risk_metrics_include_cycle_drawdown_and_profit_factor():
     assert metrics["profit_factor"] == 2.0
     assert metrics["realized_max_drawdown"] == 0.5
     assert metrics["realized_max_drawdown_pct"] == 0.05
+
+
+def test_readiness_age_uses_active_bot_creation_not_rolling_window_event():
+    now = datetime(2026, 1, 20, 12, tzinfo=timezone.utc)
+    bot = SimpleNamespace(
+        symbol="SOLUSDT", status="RUNNING", budget_quote=1000.0,
+        created_at=(now - timedelta(days=10)).isoformat(),
+        events=[GridEvent((now - timedelta(hours=1)).isoformat(), "SELL_FILLED", 100, realized_cycle_pnl=1)],
+    )
+
+    result = grid_performance([], {"bot": bot}, 7, "SOLUSDT", now)
+
+    assert result["elapsed_hours"] == 240
+    assert result["active_since"] == (now - timedelta(days=7)).isoformat()

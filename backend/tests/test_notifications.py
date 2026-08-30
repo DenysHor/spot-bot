@@ -81,3 +81,31 @@ def test_cursors_and_daily_report_survive_restart():
     assert sum("Daily PAPER report" in message for message in sent) == 1
     assert store.state["daily_report_date"] == "2026-01-01"
     assert len(store.log) == 2
+
+
+def test_weekly_evaluation_is_sent_once_per_week():
+    sent = []
+
+    async def sender(text):
+        sent.append(text)
+
+    async def weekly_provider(symbol):
+        return f"Weekly evaluation · {symbol}"
+
+    store = FakeStore()
+    bot = SimpleNamespace(
+        id="bot1", symbol="SOLUSDT", base_asset="SOL", status="RUNNING",
+        last_price=100.0, completed_cycles=1, events=[],
+    )
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={bot.id: bot}), SimpleNamespace(bots={}),
+        portfolio=SimpleNamespace(snapshot=lambda prices: {}), store=store, sender=sender,
+    )
+    notifier.weekly_report_provider = weekly_provider
+    monday = datetime(2026, 1, 5, 21, tzinfo=timezone.utc)
+
+    asyncio.run(notifier.scan_once(monday))
+    asyncio.run(notifier.scan_once(monday))
+
+    assert sum("Weekly evaluation" in message for message in sent) == 1
+    assert store.state["weekly_report_week"] == "2026-W02"

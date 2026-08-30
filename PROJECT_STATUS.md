@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.15.1`
-Current implementation: typed Binance market retries and Railway engine error logging
+Current version: `0.16.0`
+Current implementation: evidence-gated PAPER readiness and GitHub Actions CI
 
 ## Non-negotiable safety rules
 
@@ -63,6 +63,10 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - Start-aligned Buy & Hold benchmark, Grid return, excess return, realized drawdown, profit factor, fees, volume, cycles, and active time.
 - Three-attempt retry for transient Binance price timeouts before recording an engine error.
 - Typed exception details in SQLite events, Telegram alerts, and Railway logs.
+- Readiness stays `COLLECTING_DATA` until at least 7 days and 20 completed cycles.
+- Transparent P&L, drawdown, profit factor, win rate, excess-return, and fee-drag criteria.
+- Weekly Telegram evaluation with no automatic parameter changes or LIVE promotion.
+- GitHub Actions runs the backend test suite for pushes and pull requests.
 
 ## Local setup on a new Windows computer
 
@@ -99,9 +103,9 @@ Preserve unrelated user changes. Use small commits, run the full test suite, and
 5. Verify `/health` reports the new version.
 6. Hard-refresh the dashboard and confirm Market data, Telegram, and the running bot state.
 
-## Next proposed milestone: v0.16
+## Current validation milestone: v0.16
 
-Build an evidence-based PAPER readiness gate without changing trading parameters automatically:
+The evidence-based PAPER readiness gate is implemented without changing trading parameters automatically:
 
 - `COLLECTING_DATA` until at least 7 days and 20 completed cycles.
 - `PASSED` or `FAILED` based on net P&L, drawdown, profit factor, win rate, excess return, and fee drag.
@@ -109,5 +113,7 @@ Build an evidence-based PAPER readiness gate without changing trading parameters
 - A weekly Telegram evaluation report.
 - Recommendations limited to continue, stop, or start a separate PAPER experiment.
 - GitHub Actions test workflow before Railway deployment.
+
+Possible next milestone: manage separate named PAPER experiments so parameter variants never mix their evidence.
 
 Do not interpret one or a few profitable cycles as evidence that the strategy is ready for real funds.

@@ -10,6 +10,10 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     start = current - timedelta(days=days)
     symbol = symbol.upper()
     matching_bots = [bot for bot in bots.values() if bot.symbol == symbol]
+    evaluation_bots = [
+        bot for bot in matching_bots
+        if getattr(bot, "status", "RUNNING") in {"RUNNING", "PAUSED"}
+    ] or matching_bots
     filtered_trades = [t for t in trades if t.symbol == symbol and _parse(t.timestamp) >= start]
     cycle_events = [
         event
@@ -23,13 +27,18 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
     profitable = sum(event.realized_cycle_pnl > 0 for event in cycle_events)
     positive_pnl = sum(max(0.0, event.realized_cycle_pnl) for event in cycle_events)
     negative_pnl = abs(sum(min(0.0, event.realized_cycle_pnl) for event in cycle_events))
-    allocated_budget = max((bot.budget_quote for bot in matching_bots), default=0.0)
+    allocated_budget = max((bot.budget_quote for bot in evaluation_bots), default=0.0)
+    created_times = [
+        _parse(bot.created_at) for bot in evaluation_bots
+        if getattr(bot, "created_at", "")
+    ]
     activity_times = [_parse(t.timestamp) for t in filtered_trades]
     activity_times.extend(
         _parse(event.timestamp) for bot in matching_bots for event in bot.events
         if _parse(event.timestamp) >= start
     )
-    active_since = min(activity_times, default=None)
+    experiment_started_at = min(created_times or activity_times, default=None)
+    active_since = max(start, experiment_started_at) if experiment_started_at else None
 
     daily = {}
     for offset in range(days):
@@ -62,7 +71,8 @@ def grid_performance(trades, bots, days: int, symbol: str, now: datetime | None 
         "symbol": symbol,
         "days": days,
         "active_since": active_since.isoformat() if active_since else None,
-        "elapsed_hours": (current - active_since).total_seconds() / 3600 if active_since else 0.0,
+        "experiment_started_at": experiment_started_at.isoformat() if experiment_started_at else None,
+        "elapsed_hours": (current - experiment_started_at).total_seconds() / 3600 if experiment_started_at else 0.0,
         "metrics": {
             "realized_pnl": realized,
             "fees": fees,

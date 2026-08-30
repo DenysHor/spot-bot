@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.backtest.grid import GridBacktester
 from app.analytics.performance import grid_performance
+from app.analytics.readiness import strategy_readiness
 from app.core.config import settings
 from app.core.auth import SessionAuth, validate_cloud_security
 from app.core.errors import describe_exception
@@ -125,7 +126,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.15.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.16.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -238,7 +239,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.15.1",
+        "version": "0.16.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -619,7 +620,33 @@ async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
         result["benchmark_from"] = None
     benchmark = result["buy_hold_return_pct"]
     result["excess_return_pct"] = result["metrics"]["grid_return_pct"] - benchmark if benchmark is not None else None
+    result["readiness"] = strategy_readiness(result)
     return result
+
+
+async def weekly_evaluation_message(symbol: str) -> str:
+    result = await analytics_performance(symbol=symbol, days=30)
+    readiness = result["readiness"]
+    metrics = result["metrics"]
+    score = (
+        f"Quality score: {readiness['quality_score_pct']:.0f}%"
+        if readiness["quality_score_pct"] is not None
+        else f"Data progress: {readiness['data_progress_pct']:.0f}%"
+    )
+    return "\n".join([
+        f"Spot Grid Lab · Weekly evaluation · {symbol}",
+        f"Status: {readiness['status']}",
+        score,
+        f"Evidence: {readiness['elapsed_days']:.1f}/7 days, {readiness['cycles']}/20 cycles",
+        f"Net P&L: {metrics['realized_pnl']:.4f} USDT",
+        f"Grid return: {metrics['grid_return_pct']:.3f}%",
+        f"Drawdown: {metrics['realized_max_drawdown_pct']:.3f}%",
+        f"Fee drag: {readiness['fee_drag_pct']:.1f}%",
+        readiness["recommendation"],
+    ])
+
+
+notifier.weekly_report_provider = weekly_evaluation_message
 
 
 @app.post("/api/notifications/test")

@@ -32,6 +32,7 @@ class TelegramNotifier:
         self.daily_report_hour_utc = min(23, max(0, daily_report_hour_utc))
         self.enabled = bool(token and chat_id)
         self.sender = sender or self._send_telegram
+        self.weekly_report_provider = None
         self.status = NotificationStatus(enabled=self.enabled)
         self._seen: dict[str, int] = {}
         self._task: asyncio.Task | None = None
@@ -132,6 +133,22 @@ class TelegramNotifier:
         if current.hour >= self.daily_report_hour_utc and self._state("daily_report_date") != report_date:
             await self.send("DAILY_REPORT", self.daily_report())
             self._save_state("daily_report_date", report_date)
+        week = current.isocalendar()
+        week_key = f"{week.year}-W{week.week:02d}"
+        if (
+            current.weekday() == 0
+            and current.hour >= self.daily_report_hour_utc
+            and self.weekly_report_provider is not None
+            and self._state("weekly_report_week") != week_key
+        ):
+            symbols = sorted({
+                bot.symbol for bot in self.grid_engine.bots.values()
+                if bot.status in {"RUNNING", "PAUSED"}
+            })
+            for symbol in symbols:
+                text = await self.weekly_report_provider(symbol)
+                await self.send("WEEKLY_EVALUATION", text)
+            self._save_state("weekly_report_week", week_key)
 
     async def run_forever(self) -> None:
         self._running = True
