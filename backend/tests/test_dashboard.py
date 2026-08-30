@@ -14,8 +14,8 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.30.2" in page.text
-    assert "/static/app.js?v=0.30.2" in page.text
+    assert "/static/styles.css?v=0.30.3" in page.text
+    assert "/static/app.js?v=0.30.3" in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
@@ -45,6 +45,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Зелена/червона свічка — рух ціни" in page.text
     assert "`${shortSide} ${num(o.trigger_price" in script.text
     assert "labelX=w-6" in script.text
+    assert 'id="step" type="number" value="1.5" min="0.1" max="25" step="0.01"' in page.text
     assert "Grid-аналітика" in page.text
     assert "/api/analytics/performance" in script.text
     assert "Strategy readiness" in script.text
