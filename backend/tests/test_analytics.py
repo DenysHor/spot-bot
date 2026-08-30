@@ -37,11 +37,43 @@ def test_analytics_endpoint_adds_buy_and_hold(monkeypatch):
         return [[i, "100", "112", "95", "110", "1", i + 1] for i in range(8)]
 
     monkeypatch.setattr(main.market, "klines", fake_klines)
+    monkeypatch.setattr(main.grid_engine, "bots", {})
     response = TestClient(main.app).get("/api/analytics/performance?symbol=SOLUSDT&days=7")
 
     assert response.status_code == 200
-    assert response.json()["buy_hold_return_pct"] == 10.0
+    expected = ((1 / 1.001 / 100) * 110 * 0.999 - 1) * 100
+    assert response.json()["buy_hold_return_pct"] == expected
     assert response.json()["readiness"]["status"] in {"COLLECTING_DATA", "PASSED", "FAILED"}
+
+
+def test_hybrid_benchmark_uses_exact_seed_entry_and_matching_fees(monkeypatch):
+    started = datetime.now(timezone.utc) - timedelta(minutes=5)
+    event = GridEvent(started.isoformat(), "HYBRID_SEED_BOUGHT", 100.0, quote_amount=99.9)
+    bot = SimpleNamespace(
+        symbol="ENSOUSDT", status="RUNNING", budget_quote=1000.0,
+        created_at=started.isoformat(), reference_price=100.0, last_price=110.0,
+        events=[event],
+        snapshot=lambda: {
+            "strategy_profile": "UPTREND_HYBRID_10", "seed_position_pct": 10.0,
+            "grid_budget_quote": 900.0, "seed_cost_quote": 100.0,
+            "grid_pnl": 0.0, "trend_pnl": 9.780219780219781,
+        },
+    )
+
+    async def fake_klines(symbol, interval, limit):
+        return [[0, "95", "111", "94", "110", "1", 1]]
+
+    monkeypatch.setattr(main.grid_engine, "bots", {"hybrid": bot})
+    monkeypatch.setattr(main.market, "klines", fake_klines)
+    response = TestClient(main.app).get("/api/analytics/performance?symbol=ENSOUSDT&days=7")
+
+    data = response.json()
+    expected = ((1 / 1.001 / 100) * 110 * 0.999 - 1) * 100
+    assert data["benchmark_method"] == "EXACT_BOT_ENTRY"
+    assert data["benchmark_entry_price"] == 100.0
+    assert data["benchmark_last_price"] == 110.0
+    assert data["buy_hold_return_pct"] == expected
+    assert data["excess_return_pct"] == data["metrics"]["hybrid_total_return_pct"] - expected
 
 
 def test_risk_metrics_include_cycle_drawdown_and_profit_factor():

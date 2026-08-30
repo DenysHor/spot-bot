@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.31.0`
+Current version: `0.31.1`
 Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules
@@ -78,6 +78,7 @@ Treat these values as a historical handoff note. Read the live dashboard/API bef
 - New PAPER bots can execute Range, Trailing, or Hybrid 10%/20%/30% profiles; AUTO uses validated profile evidence during an uptrend.
 - Hybrid bots buy the selected trend allocation once, reserve the remainder for Grid levels, report both P&L components, and liquidate trend inventory safely when stopped.
 - Performance analytics evaluates Hybrid Total Return against Buy & Hold and separately reports Grid/Trend P&L, returns, budgets, and fees.
+- Fresh-bot Buy & Hold benchmarks use the exact Grid/Hybrid entry and latest bot price with identical round-trip fee assumptions instead of an hourly candle open.
 - Market-chart order labels are separated from the price scale and collision-adjusted; historical fills outside the visible candle window no longer distort the chart scale.
 - Historical level crossings fill at the configured grid price rather than a favorable candle extreme.
 - Binance pair search exposes only active Spot pairs quoted in the configured USDT quote asset.

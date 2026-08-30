@@ -340,7 +340,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.31.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.31.1", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -465,7 +465,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.31.0",
+        "version": "0.31.1",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1008,6 +1008,7 @@ async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
     try:
         candles = await current_klines(symbol, interval="1h", limit=min(1000, days * 24 + 2))
         active_since = result["active_since"]
+        experiment_started_at = result["experiment_started_at"]
         if active_since:
             active_ms = int(datetime.fromisoformat(active_since).timestamp() * 1000)
             aligned = [row for row in candles if int(row[0]) >= active_ms]
@@ -1015,11 +1016,39 @@ async def analytics_performance(symbol: str = "SOLUSDT", days: int = 7) -> dict:
                 candles = aligned
         first = float(candles[0][1])
         last = float(candles[-1][4])
-        result["buy_hold_return_pct"] = (last - first) / first * 100 if first else 0.0
+        benchmark_method = "ALIGNED_CANDLE_OPEN"
+        matching_bots = [
+            bot for bot in grid_engine.bots.values()
+            if bot.symbol == symbol.upper() and bot.status in {"RUNNING", "PAUSED"}
+        ]
+        exact_start = (
+            active_since and experiment_started_at
+            and datetime.fromisoformat(active_since) == datetime.fromisoformat(experiment_started_at)
+        )
+        if exact_start and matching_bots:
+            bot = matching_bots[-1]
+            seed_event = next(
+                (event for event in bot.events if event.event == "HYBRID_SEED_BOUGHT"), None,
+            )
+            first = seed_event.price if seed_event is not None else bot.reference_price
+            last = bot.last_price
+            benchmark_method = "EXACT_BOT_ENTRY"
+        if first:
+            benchmark_quantity = 1 / (1 + broker.fee_rate) / first
+            benchmark_ending = benchmark_quantity * last * (1 - broker.fee_rate)
+            result["buy_hold_return_pct"] = (benchmark_ending - 1) * 100
+        else:
+            result["buy_hold_return_pct"] = 0.0
         result["benchmark_from"] = int(candles[0][0])
+        result["benchmark_entry_price"] = first
+        result["benchmark_last_price"] = last
+        result["benchmark_method"] = benchmark_method
     except Exception:
         result["buy_hold_return_pct"] = None
         result["benchmark_from"] = None
+        result["benchmark_entry_price"] = None
+        result["benchmark_last_price"] = None
+        result["benchmark_method"] = None
     benchmark = result["buy_hold_return_pct"]
     compared_return = (
         result["metrics"]["hybrid_total_return_pct"]
