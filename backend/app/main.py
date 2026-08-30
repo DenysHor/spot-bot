@@ -353,7 +353,7 @@ async def lifespan(app: FastAPI):
     await dca_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.43.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.44.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -480,7 +480,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.43.0",
+        "version": "0.44.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1104,19 +1104,19 @@ async def weekly_evaluation_message(symbol: str) -> str:
     readiness = result["readiness"]
     metrics = result["metrics"]
     score = (
-        f"Quality score: {readiness['quality_score_pct']:.0f}%"
+        f"Оцінка якості: {readiness['quality_score_pct']:.0f}%"
         if readiness["quality_score_pct"] is not None
-        else f"Data progress: {readiness['data_progress_pct']:.0f}%"
+        else f"Зібрано даних: {readiness['data_progress_pct']:.0f}%"
     )
     return "\n".join([
-        f"Spot Grid Lab · Weekly evaluation · {symbol}",
-        f"Status: {readiness['status']}",
+        f"📈 Spot Grid Lab · Тижнева оцінка · {symbol}",
+        f"Стан: {readiness['status']}",
         score,
-        f"Evidence: {readiness['elapsed_days']:.1f}/7 days, {readiness['cycles']}/20 cycles",
-        f"Net P&L: {metrics['realized_pnl']:.4f} USDT",
-        f"Grid return: {metrics['grid_return_pct']:.3f}%",
-        f"Drawdown: {metrics['realized_max_drawdown_pct']:.3f}%",
-        f"Fee drag: {readiness['fee_drag_pct']:.1f}%",
+        f"Дані: {readiness['elapsed_days']:.1f}/7 днів, {readiness['cycles']}/20 циклів",
+        f"Чистий результат: {metrics['realized_pnl']:+.2f} USDT",
+        f"Дохідність сітки: {metrics['grid_return_pct']:.3f}%",
+        f"Просадка: {metrics['realized_max_drawdown_pct']:.3f}%",
+        f"Вплив комісій: {readiness['fee_drag_pct']:.1f}%",
         readiness["recommendation"],
     ])
 
@@ -1134,7 +1134,7 @@ def telegram_health_alerts(now: datetime) -> list[dict]:
             alerts.append({
                 "key": f"{bot.id}:{health['code']}",
                 "message": "\n".join([
-                    "Spot Grid Lab · PAPER attention",
+                    "⚠️ Spot Grid Lab · Потрібна увага",
                     f"{bot.symbol} · {health['label']}",
                     health["message"],
                     "Автоматичних змін параметрів не виконано.",

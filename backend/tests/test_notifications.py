@@ -42,8 +42,9 @@ def test_notifier_sends_only_new_important_events():
     asyncio.run(notifier.scan_once(noon))
 
     assert len(sent) == 1
-    assert "BUY_FILLED · SOLUSDT" in sent[0]
-    assert "100.0000 USDT" in sent[0]
+    assert "SOLUSDT · Сітка" in sent[0]
+    assert "Купівля виконана" in sent[0]
+    assert "Сума: 100.00 USDT" in sent[0]
 
 
 def test_notifier_sends_trailing_recenter_event():
@@ -66,8 +67,8 @@ def test_notifier_sends_trailing_recenter_event():
     asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
 
     assert len(sent) == 1
-    assert "GRID_RECENTERED · SOLUSDT" in sent[0]
-    assert "shifted 8 BUY levels" in sent[0]
+    assert "Сітку пересунуто" in sent[0]
+    assert "Сітку піднято слідом за ціною" in sent[0]
 
 
 def test_notifier_sends_buy_side_pause_and_resume_events():
@@ -90,8 +91,8 @@ def test_notifier_sends_buy_side_pause_and_resume_events():
     asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
 
     assert len(sent) == 2
-    assert "BUY_SIDE_PAUSED" in sent[0]
-    assert "BUY_SIDE_RESUMED" in sent[1]
+    assert "Нові купівлі призупинено" in sent[0]
+    assert "Нові купівлі відновлено" in sent[1]
 
 
 def test_cursors_and_daily_report_survive_restart():
@@ -125,8 +126,8 @@ def test_cursors_and_daily_report_survive_restart():
     asyncio.run(restarted.scan_once(report_time))
     asyncio.run(restarted.scan_once(report_time))
 
-    assert sum("BUY_FILLED" in message for message in sent) == 1
-    assert sum("Daily PAPER report" in message for message in sent) == 1
+    assert sum("Купівля виконана" in message for message in sent) == 1
+    assert sum("Щоденний PAPER-звіт" in message for message in sent) == 1
     assert store.state["daily_report_date"] == "2026-01-01"
     assert len(store.log) == 2
 

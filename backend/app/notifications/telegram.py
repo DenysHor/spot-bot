@@ -15,6 +15,36 @@ IMPORTANT_EVENTS = {
     "MANUAL_BUYS_DISABLED", "MANUAL_BUYS_ENABLED",
 }
 
+EVENT_LABELS = {
+    "BUY_FILLED": "🟢 Купівля виконана", "SELL_FILLED": "🔴 Продаж виконано",
+    "BUY_BLOCKED": "⚠️ Купівлю заблоковано", "SELL_BLOCKED": "⚠️ Продаж заблоковано",
+    "BUDGET_COMPLETED": "✅ Бюджет використано", "ENGINE_ERROR": "❌ Помилка бота",
+    "AUTO_PAUSED": "⏸ Бота автоматично призупинено", "GRID_RECENTERED": "↗️ Сітку пересунуто",
+    "RECENTER_LIMIT_REACHED": "⚠️ Досягнуто ліміт зсувів",
+    "BUY_SIDE_PAUSED": "⏸ Нові купівлі призупинено", "BUY_SIDE_RESUMED": "▶️ Нові купівлі відновлено",
+    "PRICE_RANGE_EXITED": "⚠️ Ціна вийшла з коридору", "PRICE_RANGE_REENTERED": "✅ Ціна повернулася в коридор",
+    "DRAIN_MODE_STARTED": "⏳ Почато м’яке завершення", "DRAIN_MODE_COMPLETED": "✅ М’яке завершення виконано",
+    "MANUAL_BUYS_DISABLED": "⏸ Покупки вимкнено", "MANUAL_BUYS_ENABLED": "▶️ Покупки увімкнено",
+}
+
+
+def _price(value: float) -> str:
+    decimals = 8 if abs(value) < 0.01 else 6 if abs(value) < 1 else 4 if abs(value) < 100 else 2
+    return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _event_message(message: str) -> str:
+    translations = {"SELL remains active": "Продажі залишаються активними.", "liquidity restored": "Доступний бюджет відновлено."}
+    if message in translations:
+        return translations[message]
+    if message.startswith("Paired SELL created at "):
+        return f"Створено парний продаж за {_price(float(message.rsplit(' ', 1)[-1]))} USDT."
+    if message.startswith("Replacement BUY created at "):
+        return f"Створено наступну купівлю за {_price(float(message.rsplit(' ', 1)[-1]))} USDT."
+    if message.startswith("Trailing Up shifted "):
+        return "Сітку піднято слідом за ціною."
+    return message
+
 
 @dataclass
 class NotificationStatus:
@@ -66,15 +96,16 @@ class TelegramNotifier:
 
     @staticmethod
     def format_event(strategy: str, bot, event) -> str:
-        lines = [f"Spot Grid Lab · {strategy}", f"{event.event} · {bot.symbol}"]
+        strategy_name = "Сітка" if strategy == "GRID" else "Накопичення"
+        lines = [f"🤖 {bot.symbol} · {strategy_name}", EVENT_LABELS.get(event.event, event.event)]
         if event.price:
-            lines.append(f"Price: {event.price:.8f}")
+            lines.append(f"Ціна: {_price(event.price)} USDT")
         if getattr(event, "quote_amount", 0):
-            lines.append(f"Quote: {event.quote_amount:.4f} USDT")
+            lines.append(f"Сума: {event.quote_amount:.2f} USDT")
         if getattr(event, "realized_cycle_pnl", 0):
-            lines.append(f"Cycle P&L: {event.realized_cycle_pnl:.4f} USDT")
+            lines.append(f"Результат циклу: {event.realized_cycle_pnl:+.2f} USDT")
         if event.message:
-            lines.append(event.message)
+            lines.append(_event_message(event.message))
         return "\n".join(lines)
 
     def daily_report(self) -> str:
@@ -89,13 +120,13 @@ class TelegramNotifier:
         running_dca = sum(bot.status == "RUNNING" for bot in self.dca_engine.bots.values())
         cycles = sum(bot.completed_cycles for bot in self.grid_engine.bots.values())
         return "\n".join([
-            "Spot Grid Lab · Daily PAPER report",
-            f"Equity: {snapshot.get('total_equity', 0):.2f} USDT",
-            f"Realized P&L: {snapshot.get('realized_pnl', 0):.2f} USDT",
-            f"Unrealized P&L: {snapshot.get('unrealized_pnl', 0):.2f} USDT",
-            f"Fees: {snapshot.get('fees_paid', 0):.2f} USDT",
-            f"Completed cycles: {cycles}",
-            f"Running bots: Grid {running_grid}, DCA {running_dca}",
+            "📊 Spot Grid Lab · Щоденний PAPER-звіт",
+            f"Капітал: {snapshot.get('total_equity', 0):.2f} USDT",
+            f"Зафіксований результат: {snapshot.get('realized_pnl', 0):+.2f} USDT",
+            f"Незакритий результат: {snapshot.get('unrealized_pnl', 0):+.2f} USDT",
+            f"Комісії: {snapshot.get('fees_paid', 0):.2f} USDT",
+            f"Завершено циклів: {cycles}",
+            f"Працюють боти: сітка — {running_grid}, накопичення — {running_dca}",
         ])
 
     async def _send_telegram(self, text: str) -> None:
@@ -120,7 +151,7 @@ class TelegramNotifier:
     async def send_test(self) -> None:
         if not self.enabled:
             raise ValueError("Telegram notifications are not configured")
-        await self.send("TEST", "Spot Grid Lab: cloud notifications are online.")
+        await self.send("TEST", "✅ Spot Grid Lab\nTelegram-сповіщення працюють.")
 
     async def scan_once(self, now: datetime | None = None) -> None:
         if not self.enabled:
