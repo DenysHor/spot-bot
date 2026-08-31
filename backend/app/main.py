@@ -382,10 +382,19 @@ notifier = TelegramNotifier(
 async def notify_testnet_event(event: str, bot, order) -> None:
     if not notifier.enabled:
         return
-    label = "Купівлю виконано; створено парний продаж" if event == "BUY_FILLED" else "Продаж виконано; цикл завершено"
+    labels = {
+        "BUY_FILLED": "Купівлю виконано; створено парний продаж",
+        "SELL_FILLED": "Продаж виконано; цикл завершено",
+        "BUY_AUTO_PAUSED": "Нові покупки автоматично призупинено через нестачу тестового USDT",
+        "SYNC_ERROR": f"Помилка синхронізації: {bot.last_error}",
+    }
+    label = labels.get(event)
+    if not label:
+        return
+    price_line = f"\nЦіна: {order.price:.8f} USDT" if order else ""
     await notifier.send(
         f"TESTNET_{event}",
-        f"🧪 {bot.symbol} · TESTNET\n{label}\nЦіна: {order.price:.8f} USDT\nТільки віртуальні кошти.",
+        f"🧪 {bot.symbol} · TESTNET\n{label}{price_line}\nТільки віртуальні кошти.",
     )
 
 
@@ -431,7 +440,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.53.2", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.54.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -571,7 +580,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.53.2",
+        "version": "0.54.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -658,7 +667,7 @@ async def testnet_grid_start(request: TestnetGridStartRequest) -> dict:
     try:
         symbol = request.symbol.upper()
         base_asset_from_symbol(symbol)
-        price = await current_price(symbol)
+        price = await testnet.price(symbol)
         bot = await testnet_engine.start(symbol, request.budget_quote, request.step_pct, request.levels, price)
         if notifier.enabled:
             await notifier.send("TESTNET_BOT_STARTED", f"🧪 {symbol} · TESTNET\nСітку запущено на віртуальних коштах.\nБюджет: {request.budget_quote:.2f} USDT")

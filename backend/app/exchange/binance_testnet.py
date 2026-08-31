@@ -75,6 +75,10 @@ class BinanceTestnetClient:
             "min_notional": notional.get("minNotional", "0"),
         }
 
+    async def price(self, symbol: str) -> float:
+        data = await self._public(f"/api/v3/ticker/price?symbol={symbol.upper()}")
+        return float(data["price"])
+
     @staticmethod
     def floor_to_step(value: float | str, step: float | str) -> str:
         number, quantum = Decimal(str(value)), Decimal(str(step))
@@ -100,6 +104,11 @@ class BinanceTestnetClient:
 
     async def cancel_order(self, symbol: str, order_id: int) -> dict:
         return await self._signed("DELETE", "/api/v3/order", {"symbol": symbol.upper(), "orderId": order_id})
+
+    async def trades(self, symbol: str, order_id: int) -> list[dict]:
+        return await self._signed("GET", "/api/v3/myTrades", {
+            "symbol": symbol.upper(), "orderId": order_id, "limit": 100,
+        })
 
     async def verify(self, symbol: str = "BTCUSDT", quote_order_qty: float = 10.0) -> dict:
         account = await self._signed("GET", "/api/v3/account", {"omitZeroBalances": "true"})

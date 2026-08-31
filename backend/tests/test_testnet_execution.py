@@ -9,12 +9,19 @@ class FakeTestnetClient:
         self.next_id = 1
         self.created = []
         self.statuses = {}
+        self.trade_rows = {}
 
     floor_to_step = staticmethod(BinanceTestnetClient.floor_to_step)
 
     async def symbol_rules(self, symbol):
         return {"symbol": symbol, "base_asset": "BTC", "quote_asset": "USDT", "status": "TRADING",
                 "tick_size": "0.01", "step_size": "0.00001", "min_qty": "0.00001", "min_notional": "5"}
+
+    async def price(self, symbol):
+        return 100.0
+
+    async def trades(self, symbol, order_id):
+        return self.trade_rows.get(order_id, [])
 
     async def create_limit_order(self, symbol, side, quantity, price):
         order_id = self.next_id
@@ -45,8 +52,17 @@ def test_testnet_grid_creates_buy_levels_and_paired_sell():
         assert all(order.side == "BUY" for order in bot.orders)
         first = bot.orders[0]
         client.statuses[first.order_id] = {"status": "FILLED", "executedQty": "0.50505", "cummulativeQuoteQty": "50"}
+        client.trade_rows[first.order_id] = [{"commissionAsset": "BTC", "commission": "0.00005"}]
         await engine.sync()
-        assert any(order.side == "SELL" for order in bot.orders)
+        sell = next(order for order in bot.orders if order.side == "SELL")
+        assert sell.quantity == 0.505
+        assert bot.fees["BTC"] == 0.00005
+        client.statuses[sell.order_id] = {"status": "FILLED", "executedQty": "0.505", "cummulativeQuoteQty": "51"}
+        client.trade_rows[sell.order_id] = [{"commissionAsset": "USDT", "commission": "0.05"}]
+        await engine.sync()
+        assert bot.completed_cycles == 1
+        assert round(bot.realized_pnl, 8) == 0.95
+        assert bot.last_price == 100
         assert bot.snapshot()["virtual_funds"] is True
     asyncio.run(scenario())
 
