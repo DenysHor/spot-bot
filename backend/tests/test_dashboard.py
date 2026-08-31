@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.51.0" in page.text
-    assert "/static/advisor.css?v=0.51.0" in page.text
-    assert "/static/app.js?v=0.51.0" in page.text
+    assert "/static/styles.css?v=0.52.0" in page.text
+    assert "/static/advisor.css?v=0.52.0" in page.text
+    assert "/static/app.js?v=0.52.0" in page.text
     assert "Аналітика портфеля" in page.text
     assert 'id="advisor-bots"' in page.text
     assert "/api/analytics/advisor" in script.text
@@ -260,6 +260,18 @@ def test_testnet_readiness_never_exposes_credentials():
     assert data["live_execution_enabled"] is False
     assert "api_key" not in data
     assert "api_secret" not in data
+    assert "missing_variables" in data
+
+
+def test_testnet_verify_explains_missing_railway_variables(monkeypatch):
+    monkeypatch.setattr(main.testnet, "api_key", "")
+    monkeypatch.setattr(main.testnet, "api_secret", "")
+
+    response = TestClient(main.app).post("/api/testnet/verify")
+
+    assert response.status_code == 400
+    assert "BINANCE_API_KEY" in response.json()["detail"]
+    assert "BINANCE_API_SECRET" in response.json()["detail"]
 
 
 def test_testnet_verify_uses_validation_only(monkeypatch):
@@ -271,6 +283,8 @@ def test_testnet_verify_uses_validation_only(monkeypatch):
             "execution_enabled": False,
         }
 
+    monkeypatch.setattr(main.testnet, "api_key", "test-key")
+    monkeypatch.setattr(main.testnet, "api_secret", "test-secret")
     monkeypatch.setattr(main.testnet, "verify", fake_verify)
     main.testnet_health.update({"verified": False, "last_checked_at": "", "last_error": ""})
     response = TestClient(main.app).post("/api/testnet/verify")

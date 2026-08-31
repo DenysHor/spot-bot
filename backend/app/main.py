@@ -412,7 +412,7 @@ async def lifespan(app: FastAPI):
     await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.51.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.52.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -545,7 +545,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.51.0",
+        "version": "0.52.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -555,8 +555,14 @@ async def health() -> dict:
 
 @app.get("/api/testnet/readiness")
 async def testnet_readiness() -> dict:
+    missing_variables = []
+    if not settings.binance_api_key.strip():
+        missing_variables.append("BINANCE_API_KEY")
+    if not settings.binance_api_secret.strip():
+        missing_variables.append("BINANCE_API_SECRET")
     return {
         "configured": testnet.configured,
+        "missing_variables": missing_variables,
         "verified": testnet_health["verified"],
         "last_checked_at": testnet_health["last_checked_at"],
         "last_error": testnet_health["last_error"],
@@ -569,6 +575,16 @@ async def testnet_readiness() -> dict:
 
 @app.post("/api/testnet/verify")
 async def testnet_verify() -> dict:
+    if not testnet.configured:
+        missing = []
+        if not settings.binance_api_key.strip():
+            missing.append("BINANCE_API_KEY")
+        if not settings.binance_api_secret.strip():
+            missing.append("BINANCE_API_SECRET")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Railway не передав змінні: {', '.join(missing)}. Додайте їх до цього сервісу та виконайте Redeploy.",
+        )
     try:
         result = await testnet.verify()
         testnet_health.update({
@@ -1356,6 +1372,12 @@ async def monitoring_status() -> dict:
         "testnet": {
             "configured": testnet.configured, "verified": testnet_health["verified"],
             "last_checked_at": testnet_health["last_checked_at"],
+            "missing_variables": [
+                name for name, value in (
+                    ("BINANCE_API_KEY", settings.binance_api_key),
+                    ("BINANCE_API_SECRET", settings.binance_api_secret),
+                ) if not value.strip()
+            ],
             "execution_enabled": False,
         },
     }
