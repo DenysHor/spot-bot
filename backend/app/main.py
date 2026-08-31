@@ -31,6 +31,7 @@ from app.persistence.sqlite import SQLiteStore
 from app.risk.manager import RiskLimits, RiskManager
 from app.signal.execution import SignalExecutionEngine
 from app.strategies.smart_grid import SmartGrid
+from app.testnet.execution import TestnetGridEngine
 
 market = BinancePublicClient()
 testnet = BinanceTestnetClient(settings.binance_api_key, settings.binance_api_secret)
@@ -40,6 +41,7 @@ auth = SessionAuth(
     settings.session_secret, settings.secure_cookies,
 )
 store = SQLiteStore(settings.sqlite_path)
+testnet_engine = TestnetGridEngine(testnet, store=store, poll_seconds=settings.grid_poll_seconds)
 portfolio = PaperPortfolio(
     starting_quote=settings.paper_start_balance,
     quote_asset=settings.quote_asset,
@@ -375,6 +377,19 @@ notifier = TelegramNotifier(
     signal_engine=signal_engine, portfolio=portfolio, store=store, poll_seconds=settings.notification_poll_seconds,
     daily_report_hour_utc=settings.daily_report_hour_utc,
 )
+
+
+async def notify_testnet_event(event: str, bot, order) -> None:
+    if not notifier.enabled:
+        return
+    label = "Купівлю виконано; створено парний продаж" if event == "BUY_FILLED" else "Продаж виконано; цикл завершено"
+    await notifier.send(
+        f"TESTNET_{event}",
+        f"🧪 {bot.symbol} · TESTNET\n{label}\nЦіна: {order.price:.8f} USDT\nТільки віртуальні кошти.",
+    )
+
+
+testnet_engine.event_sink = notify_testnet_event
 market_scanner_task: asyncio.Task | None = None
 
 
@@ -398,6 +413,9 @@ async def lifespan(app: FastAPI):
         signal_engine.start_background()
         notifier.start_background()
         market_scanner_task = asyncio.create_task(market_scanner_forever())
+    elif settings.trading_mode == "TESTNET":
+        testnet_engine.start_background()
+        notifier.start_background()
     yield
     if market_scanner_task and not market_scanner_task.done():
         market_scanner_task.cancel()
@@ -410,9 +428,10 @@ async def lifespan(app: FastAPI):
     await grid_engine.stop_background()
     await dca_engine.stop_background()
     await signal_engine.stop_background()
+    await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.52.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.53.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -495,6 +514,13 @@ class SignalStartRequest(BaseModel):
     min_score: int = Field(default=65, ge=50, le=90)
 
 
+class TestnetGridStartRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    budget_quote: float = Field(default=100.0, gt=0, le=10000)
+    step_pct: float = Field(default=1.5, gt=0, le=10)
+    levels: int = Field(default=4, ge=1, le=10)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -545,10 +571,11 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.52.0",
+        "version": "0.53.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode == "PAPER",
+        "testnet_background_worker": settings.trading_mode == "TESTNET",
         "authentication_enabled": auth.enabled,
     }
 
@@ -567,7 +594,7 @@ async def testnet_readiness() -> dict:
         "last_checked_at": testnet_health["last_checked_at"],
         "last_error": testnet_health["last_error"],
         "trading_mode": settings.trading_mode,
-        "testnet_execution_enabled": False,
+        "testnet_execution_enabled": settings.trading_mode == "TESTNET",
         "live_execution_enabled": False,
         "next_step": "Verify credentials and order.test while TRADING_MODE remains PAPER",
     }
@@ -597,6 +624,74 @@ async def testnet_verify() -> dict:
             "last_error": str(exc),
         })
         raise HTTPException(status_code=502, detail=f"Testnet verification failed: {exc}") from exc
+
+
+def require_testnet_mode() -> None:
+    if settings.trading_mode != "TESTNET":
+        raise HTTPException(status_code=409, detail="Для тестових заявок встановіть TRADING_MODE=TESTNET і виконайте Redeploy")
+    if not testnet.configured:
+        raise HTTPException(status_code=400, detail="Ключі Binance Spot Testnet не налаштовані")
+
+
+@app.get("/api/testnet/account")
+async def testnet_account() -> dict:
+    require_testnet_mode()
+    try:
+        return {"balances": await testnet_engine.balances(), "virtual_funds": True}
+    except BinanceTestnetError as exc:
+        raise HTTPException(status_code=502, detail=f"Testnet: {exc}") from exc
+
+
+@app.get("/api/testnet/grid-bot")
+async def testnet_grid_bot() -> dict:
+    return {
+        "enabled": settings.trading_mode == "TESTNET",
+        "trading_mode": settings.trading_mode,
+        "bot": testnet_engine.bot.snapshot() if testnet_engine.bot else None,
+        "virtual_funds": True, "live_execution_enabled": False,
+    }
+
+
+@app.post("/api/testnet/grid-bot/start")
+async def testnet_grid_start(request: TestnetGridStartRequest) -> dict:
+    require_testnet_mode()
+    try:
+        symbol = request.symbol.upper()
+        base_asset_from_symbol(symbol)
+        price = await current_price(symbol)
+        bot = await testnet_engine.start(symbol, request.budget_quote, request.step_pct, request.levels, price)
+        if notifier.enabled:
+            await notifier.send("TESTNET_BOT_STARTED", f"🧪 {symbol} · TESTNET\nСітку запущено на віртуальних коштах.\nБюджет: {request.budget_quote:.2f} USDT")
+        return bot.snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/testnet/grid-bot/stop-buys")
+async def testnet_grid_stop_buys() -> dict:
+    require_testnet_mode()
+    try:
+        return (await testnet_engine.stop_buys()).snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/testnet/grid-bot/soft-complete")
+async def testnet_grid_soft_complete() -> dict:
+    require_testnet_mode()
+    try:
+        return (await testnet_engine.stop_buys(soft_complete=True)).snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/testnet/grid-bot/stop")
+async def testnet_grid_stop() -> dict:
+    require_testnet_mode()
+    try:
+        return (await testnet_engine.stop()).snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/market/symbols/search")
@@ -1378,7 +1473,7 @@ async def monitoring_status() -> dict:
                     ("BINANCE_API_SECRET", settings.binance_api_secret),
                 ) if not value.strip()
             ],
-            "execution_enabled": False,
+            "execution_enabled": settings.trading_mode == "TESTNET",
         },
     }
 

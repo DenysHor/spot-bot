@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.52.0">
-  <link rel="stylesheet" href="/static/advisor.css?v=0.52.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.53.0">
+  <link rel="stylesheet" href="/static/advisor.css?v=0.53.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -138,6 +138,22 @@
       <div id="event-feed" class="event-feed"><p class="empty">Подій ще немає.</p></div>
     </section>
 
+    <section class="panel overview-only" id="testnet-panel">
+      <div class="panel-head"><div><p class="eyebrow">BINANCE SPOT TESTNET</p><h2>Тестова торгівля</h2></div><strong id="testnet-mode">Завантаження…</strong></div>
+      <p class="form-note">Тільки віртуальні кошти Binance Testnet. LIVE-виконання програмно вимкнене.</p>
+      <p id="testnet-balance" class="form-note">Баланс стане доступним у режимі TESTNET.</p>
+      <div class="signal-layout">
+        <form id="testnet-form" class="signal-form">
+          <label>Spot USDT-пара<input id="testnet-symbol" value="BTCUSDT" required></label>
+          <label>Віртуальний бюджет, USDT<input id="testnet-budget" type="number" value="100" min="10" max="10000" required></label>
+          <label>Крок, %<input id="testnet-step" type="number" value="1.5" min="0.1" max="10" step="0.1" required></label>
+          <label>Рівні купівлі<input id="testnet-levels" type="number" value="4" min="1" max="10" required></label>
+          <button id="testnet-start" type="submit">Запустити TESTNET-сітку</button>
+        </form>
+        <div id="testnet-bot" class="bot-list"><p class="empty">TESTNET-бота ще немає.</p></div>
+      </div>
+    </section>
+
     <section class="panel bots-panel detail-only">
       <div class="panel-head"><div><p class="eyebrow">АВТОМАТИЗАЦІЯ</p><h2>Grid-боти</h2></div><button class="ghost" id="refresh">Оновити</button></div>
       <div id="bots" class="bot-list"><p class="empty">Активних ботів ще немає.</p></div>
@@ -211,6 +227,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openAdvisor()"><span>◫</span>Аналітика</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.52.0"></script>
+  <script src="/static/app.js?v=0.53.0"></script>
 </body>
 </html>

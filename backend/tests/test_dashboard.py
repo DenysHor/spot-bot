@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.52.0" in page.text
-    assert "/static/advisor.css?v=0.52.0" in page.text
-    assert "/static/app.js?v=0.52.0" in page.text
+    assert "/static/styles.css?v=0.53.0" in page.text
+    assert "/static/advisor.css?v=0.53.0" in page.text
+    assert "/static/app.js?v=0.53.0" in page.text
     assert "Аналітика портфеля" in page.text
     assert 'id="advisor-bots"' in page.text
     assert "/api/analytics/advisor" in script.text
@@ -41,6 +41,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "setupStrategyLayout" in script.text
     assert ".strategy-launch-layout" in advisor_styles.text
     assert "Binance Spot Testnet" in page.text
+    assert "Запустити TESTNET-сітку" in page.text
+    assert "/api/testnet/grid-bot/start" in script.text
     assert "/api/testnet/verify" in script.text
     assert "Smart DCA" in page.text
     assert "Оптимізація сітки" in page.text
@@ -294,3 +296,18 @@ def test_testnet_verify_uses_validation_only(monkeypatch):
     assert data["order_test_passed"] is True
     assert data["execution_enabled"] is False
     assert data["verified"] is True
+
+
+def test_testnet_order_routes_are_locked_in_paper_mode():
+    client = TestClient(main.app)
+
+    state = client.get("/api/testnet/grid-bot")
+    start = client.post("/api/testnet/grid-bot/start", json={
+        "symbol": "BTCUSDT", "budget_quote": 100, "step_pct": 1.5, "levels": 4,
+    })
+
+    assert state.status_code == 200
+    assert state.json()["enabled"] is False
+    assert state.json()["live_execution_enabled"] is False
+    assert start.status_code == 409
+    assert "TRADING_MODE=TESTNET" in start.json()["detail"]
