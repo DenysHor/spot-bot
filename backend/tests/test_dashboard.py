@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.50.0" in page.text
-    assert "/static/advisor.css?v=0.50.0" in page.text
-    assert "/static/app.js?v=0.50.0" in page.text
+    assert "/static/styles.css?v=0.51.0" in page.text
+    assert "/static/advisor.css?v=0.51.0" in page.text
+    assert "/static/app.js?v=0.51.0" in page.text
     assert "Аналітика портфеля" in page.text
     assert 'id="advisor-bots"' in page.text
     assert "/api/analytics/advisor" in script.text
@@ -40,6 +40,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "Чинний Grid не буде змінено автоматично" in script.text
     assert "setupStrategyLayout" in script.text
     assert ".strategy-launch-layout" in advisor_styles.text
+    assert "Binance Spot Testnet" in page.text
+    assert "/api/testnet/verify" in script.text
     assert "Smart DCA" in page.text
     assert "Оптимізація сітки" in page.text
     assert "Перевірка 70/30" in page.text
@@ -247,3 +249,34 @@ def test_portfolio_advisor_is_available_without_active_bots(monkeypatch):
     assert data["summary"]["capital_utilization_pct"] == 0
     assert data["bots"] == []
     assert "відкритих позицій" in data["caveat"]
+
+
+def test_testnet_readiness_never_exposes_credentials():
+    response = TestClient(main.app).get("/api/testnet/readiness")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["testnet_execution_enabled"] is False
+    assert data["live_execution_enabled"] is False
+    assert "api_key" not in data
+    assert "api_secret" not in data
+
+
+def test_testnet_verify_uses_validation_only(monkeypatch):
+    async def fake_verify():
+        return {
+            "connected": True, "can_trade": True, "account_type": "SPOT",
+            "permissions": ["SPOT"], "non_zero_balances": [{"asset": "USDT", "free": "1000", "locked": "0"}],
+            "order_test_passed": True, "commission_preview_available": True,
+            "execution_enabled": False,
+        }
+
+    monkeypatch.setattr(main.testnet, "verify", fake_verify)
+    main.testnet_health.update({"verified": False, "last_checked_at": "", "last_error": ""})
+    response = TestClient(main.app).post("/api/testnet/verify")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["order_test_passed"] is True
+    assert data["execution_enabled"] is False
+    assert data["verified"] is True

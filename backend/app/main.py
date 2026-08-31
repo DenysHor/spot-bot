@@ -22,6 +22,7 @@ from app.core.auth import SessionAuth, validate_cloud_security
 from app.core.errors import describe_exception
 from app.dca.execution import DcaExecutionEngine
 from app.exchange.binance_public import BinancePublicClient
+from app.exchange.binance_testnet import BinanceTestnetClient, BinanceTestnetError
 from app.grid.execution import GridExecutionEngine
 from app.notifications.telegram import TelegramNotifier
 from app.paper.broker import PaperBroker
@@ -32,6 +33,8 @@ from app.signal.execution import SignalExecutionEngine
 from app.strategies.smart_grid import SmartGrid
 
 market = BinancePublicClient()
+testnet = BinanceTestnetClient(settings.binance_api_key, settings.binance_api_secret)
+testnet_health = {"verified": False, "last_checked_at": "", "last_error": ""}
 auth = SessionAuth(
     settings.dashboard_username, settings.dashboard_password,
     settings.session_secret, settings.secure_cookies,
@@ -409,7 +412,7 @@ async def lifespan(app: FastAPI):
     await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.50.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.51.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -542,12 +545,42 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.50.0",
+        "version": "0.51.0",
         "trading_mode": settings.trading_mode,
-        "live_trading_enabled": settings.trading_mode == "LIVE",
+        "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode == "PAPER",
         "authentication_enabled": auth.enabled,
     }
+
+
+@app.get("/api/testnet/readiness")
+async def testnet_readiness() -> dict:
+    return {
+        "configured": testnet.configured,
+        "verified": testnet_health["verified"],
+        "last_checked_at": testnet_health["last_checked_at"],
+        "last_error": testnet_health["last_error"],
+        "trading_mode": settings.trading_mode,
+        "testnet_execution_enabled": False,
+        "live_execution_enabled": False,
+        "next_step": "Verify credentials and order.test while TRADING_MODE remains PAPER",
+    }
+
+
+@app.post("/api/testnet/verify")
+async def testnet_verify() -> dict:
+    try:
+        result = await testnet.verify()
+        testnet_health.update({
+            "verified": True, "last_checked_at": datetime.now(timezone.utc).isoformat(), "last_error": "",
+        })
+        return {**result, **testnet_health, "trading_mode": settings.trading_mode}
+    except BinanceTestnetError as exc:
+        testnet_health.update({
+            "verified": False, "last_checked_at": datetime.now(timezone.utc).isoformat(),
+            "last_error": str(exc),
+        })
+        raise HTTPException(status_code=502, detail=f"Testnet verification failed: {exc}") from exc
 
 
 @app.get("/api/market/symbols/search")
@@ -1319,6 +1352,11 @@ async def monitoring_status() -> dict:
             "running": sum(bot.status == "RUNNING" for bot in signal_bots_state),
             "paused": sum(bot.status == "PAUSED" for bot in signal_bots_state),
             "errors": sum(bot.consecutive_errors for bot in signal_bots_state),
+        },
+        "testnet": {
+            "configured": testnet.configured, "verified": testnet_health["verified"],
+            "last_checked_at": testnet_health["last_checked_at"],
+            "execution_enabled": False,
         },
     }
 
