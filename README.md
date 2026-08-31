@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.46.0**. Automatic Grid, Smart DCA, and Signal Bot execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
+> Current development version: **0.47.0**. Automatic Grid, Smart DCA, and Signal Bot execution are PAPER-only. TESTNET/LIVE remain intentionally disabled.
 
 ## Implemented
 

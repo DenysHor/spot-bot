@@ -1,0 +1,17 @@
+.advisor-only{display:none}
+.analytics-view .overview-only,.analytics-view .detail-only,.analytics-view .scanner-only,.analytics-view .monitoring-panel{display:none!important}
+.analytics-view .advisor-only{display:block}
+.advisor-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.advisor-summary>div,.advisor-metrics>div{padding:11px;background:#0e131a;border:1px solid var(--line);border-radius:9px}
+.advisor-summary span,.advisor-metrics span,.advisor-card-head span{display:block;color:var(--muted);font-size:.64rem}
+.advisor-summary strong,.advisor-metrics strong{display:block;margin-top:5px;font-size:.85rem}
+.advisor-caveat{margin:12px 0 16px}
+.advisor-bots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.advisor-card{padding:15px;background:#0e131a;border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:11px}
+.advisor-card.good{border-left-color:var(--green)}.advisor-card.warning{border-left-color:var(--amber)}.advisor-card.danger{border-left-color:var(--red)}
+.advisor-card-head{display:flex;justify-content:space-between;gap:14px}.advisor-card-head>div strong{font-size:1rem}.advisor-card-head b{max-width:58%;text-align:right;font-size:.76rem;line-height:1.35}
+.advisor-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:13px}
+.advisor-card ul{min-height:42px;margin:12px 0;padding-left:18px;color:var(--muted);font-size:.7rem;line-height:1.5}
+.advisor-actions{display:flex;flex-wrap:wrap;gap:7px}.advisor-actions button{padding:8px 10px;font-size:.69rem}
+@media(max-width:1000px){.advisor-summary{grid-template-columns:repeat(3,1fr)}.advisor-bots{grid-template-columns:1fr}}
+@media(max-width:600px){.advisor-panel .panel-head{align-items:stretch;flex-direction:column;gap:9px}.advisor-summary{grid-template-columns:1fr 1fr}.advisor-metrics{grid-template-columns:1fr 1fr}.advisor-card-head{display:grid}.advisor-card-head b{max-width:none;text-align:left}.advisor-actions{display:grid;grid-template-columns:1fr 1fr}.advisor-actions button{width:100%}.mobile-bottom-nav{grid-template-columns:repeat(4,1fr)}}

@@ -11,22 +11,29 @@ def test_dashboard_and_static_assets_are_served():
     page = client.get("/")
     script = client.get("/static/app.js")
     styles = client.get("/static/styles.css")
+    advisor_styles = client.get("/static/advisor.css")
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.46.0" in page.text
-    assert "/static/app.js?v=0.46.0" in page.text
+    assert "/static/styles.css?v=0.47.0" in page.text
+    assert "/static/advisor.css?v=0.47.0" in page.text
+    assert "/static/app.js?v=0.47.0" in page.text
+    assert "Аналітика портфеля" in page.text
+    assert 'id="advisor-bots"' in page.text
+    assert "/api/analytics/advisor" in script.text
     assert "Сигнальні PAPER-боти" in page.text
     assert 'id="signal-preflight"' in page.text
     assert 'id="signal-symbol-status"' in page.text
     assert page.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert script.status_code == 200
+    assert advisor_styles.status_code == 200
     assert script.headers["cache-control"] == "no-cache, max-age=0, must-revalidate"
     assert "/api/backtest/grid" in script.text
     assert "/api/dca/bots/start" in script.text
     assert "/api/backtest/grid/optimize" in script.text
     assert "/api/backtest/grid/walk-forward" in script.text
     assert "/api/grid/bots/${id}/pause" in script.text
+    assert "Зупинити лише нові покупки" in script.text
     assert "Smart DCA" in page.text
     assert "Оптимізація сітки" in page.text
     assert "Перевірка 70/30" in page.text
@@ -221,3 +228,16 @@ def test_monitoring_and_csv_exports_are_available():
     assert trades.text.startswith("id,timestamp,symbol")
     assert events.status_code == 200
     assert events.text.startswith("strategy,bot_id,symbol")
+
+
+def test_portfolio_advisor_is_available_without_active_bots(monkeypatch):
+    monkeypatch.setattr(main.grid_engine, "bots", {})
+
+    response = TestClient(main.app).get("/api/analytics/advisor")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["active_bots"] == 0
+    assert data["summary"]["capital_utilization_pct"] == 0
+    assert data["bots"] == []
+    assert "відкритих позицій" in data["caveat"]

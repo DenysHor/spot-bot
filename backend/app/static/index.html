@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.46.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.47.0">
+  <link rel="stylesheet" href="/static/advisor.css?v=0.47.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -27,6 +28,16 @@
 
   <main>
     <nav id="dashboard-tabs" class="dashboard-tabs"><button class="active" type="button">Огляд</button></nav>
+
+    <section class="panel advisor-panel advisor-only">
+      <div class="panel-head">
+        <div><p class="eyebrow">АНАЛІТИЧНИЙ ПОМІЧНИК</p><h2>Аналітика портфеля</h2></div>
+        <button id="advisor-refresh" class="ghost" type="button">Проаналізувати зараз</button>
+      </div>
+      <div id="advisor-summary" class="advisor-summary"><p class="empty">Натисніть кнопку, щоб отримати актуальний висновок.</p></div>
+      <p id="advisor-caveat" class="form-note advisor-caveat"></p>
+      <div id="advisor-bots" class="advisor-bots"><p class="empty">Завантаження рекомендацій…</p></div>
+    </section>
 
     <section class="panel scanner-panel scanner-only">
       <div class="panel-head">
@@ -197,8 +208,8 @@
       <div id="walk-forward-result" class="walk-forward-result hidden"></div>
     </section>
   </main>
-  <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
+  <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openAdvisor()"><span>◫</span>Аналітика</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.46.0"></script>
+  <script src="/static/app.js?v=0.47.0"></script>
 </body>
 </html>

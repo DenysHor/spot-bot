@@ -373,7 +373,7 @@ async def lifespan(app: FastAPI):
     await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.46.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.47.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -506,7 +506,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.46.0",
+        "version": "0.47.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1100,6 +1100,130 @@ def portfolio_comparison(now: datetime | None = None) -> dict:
 @app.get("/api/analytics/portfolio-comparison")
 async def analytics_portfolio_comparison() -> dict:
     return portfolio_comparison()
+
+
+@app.get("/api/analytics/advisor")
+async def analytics_advisor() -> dict:
+    active = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
+    prices = {bot.base_asset: bot.last_price for bot in active if bot.last_price > 0}
+    portfolio_state = portfolio.snapshot(prices)
+    scanner_items = ((market_scanner_cache.get("result") or {}).get("items") or [])
+    scanner_by_symbol = {item["symbol"]: item for item in scanner_items}
+    now = datetime.now(timezone.utc)
+    rows = []
+    for bot in active:
+        state = bot.snapshot()
+        performance = grid_performance(portfolio.trades, grid_engine.bots, 30, bot.symbol)
+        metrics = performance["metrics"]
+        elapsed_days = performance["elapsed_hours"] / 24
+        deployed = state["grid_open_exposure_quote"] + state["seed_value_quote"]
+        deployed_pct = deployed / bot.budget_quote * 100 if bot.budget_quote else 0
+        total_pct = state["total_pnl"] / bot.budget_quote * 100 if bot.budget_quote else 0
+        unrealized_pct = state["unrealized_pnl"] / bot.budget_quote * 100 if bot.budget_quote else 0
+        evaluated_pnl = metrics.get("hybrid_total_pnl", metrics["realized_pnl"])
+        gross_cycle_profit = evaluated_pnl + metrics["fees"]
+        fee_drag = metrics["fees"] / gross_cycle_profit * 100 if gross_cycle_profit > 0 else (100.0 if metrics["fees"] else 0.0)
+        open_buy_prices = [
+            order.source_buy_price for order in bot.open_orders
+            if order.side == "SELL" and order.source_buy_price > 0
+        ]
+        matching_buys = [
+            datetime.fromisoformat(event.timestamp.replace("Z", "+00:00"))
+            for event in bot.events
+            if event.event == "BUY_FILLED" and any(
+                abs(event.price - price) <= max(1e-9, price * 1e-8) for price in open_buy_prices
+            )
+        ]
+        oldest_open_hours = max(0.0, (now - min(matching_buys)).total_seconds() / 3600) if matching_buys else 0.0
+        market_item = scanner_by_symbol.get(bot.symbol)
+        if not market_item:
+            market_regime = "НЕ ОЦІНЕНО"
+        else:
+            market_regime = {
+                "DOWNTREND": "СПАД", "UPTREND": "ЗРОСТАННЯ", "RANGE": "БОКОВИЙ",
+                "OVERHEATED": "ПЕРЕГРІТИЙ", "UNCERTAIN": "НЕВИЗНАЧЕНИЙ",
+            }.get(market_item.get("regime", {}).get("name"), "НЕВИЗНАЧЕНИЙ")
+        severity = "GOOD"
+        title = "Продовжувати PAPER-збір"
+        reasons = []
+        actions = [{"code": "OPEN", "label": "Відкрити бота"}]
+
+        if bot.consecutive_errors:
+            severity, title = "DANGER", "Перевірити помилки й призупинити"
+            reasons.append(f"Помилок поспіль: {bot.consecutive_errors}")
+            if bot.status == "RUNNING":
+                actions.append({"code": "PAUSE", "label": "Пауза"})
+        elif total_pct <= -3:
+            severity, title = "DANGER", "Не збільшувати позицію; розглянути м’яке завершення"
+            reasons.append(f"Загальний результат становить {total_pct:.2f}% бюджету")
+            if bot.status == "RUNNING" and not state["manual_buy_paused"]:
+                actions.append({"code": "STOP_BUYS", "label": "Зупинити нові покупки"})
+            if bot.status == "RUNNING" and not state["drain_mode"]:
+                actions.append({"code": "SOFT_COMPLETE", "label": "М’яко завершити"})
+        elif deployed_pct >= 90 and market_regime == "СПАД":
+            severity, title = "DANGER", "Увесь бюджет залучений під час спаду — зупинити нові покупки"
+            reasons.append(f"Залучено {deployed_pct:.0f}% бюджету, ринковий режим: спад")
+            reasons.append(f"Незакритий результат: {unrealized_pct:.2f}% бюджету")
+            if bot.status == "RUNNING" and not state["manual_buy_paused"]:
+                actions.append({"code": "STOP_BUYS", "label": "Зупинити нові покупки"})
+        elif deployed_pct >= 90 and unrealized_pct <= -1:
+            severity, title = "WARNING", "Увесь бюджет залучений — зупинити нові покупки"
+            reasons.append(f"Залучено {deployed_pct:.0f}% бюджету, незакритий результат {unrealized_pct:.2f}%")
+            if bot.status == "RUNNING" and not state["manual_buy_paused"]:
+                actions.append({"code": "STOP_BUYS", "label": "Зупинити нові покупки"})
+        elif state["total_pnl"] > 0 and fee_drag <= 40:
+            severity, title = "GOOD", "Поточні параметри виглядають здорово — продовжувати"
+            reasons.append("Загальний результат позитивний, вплив комісій прийнятний")
+        elif metrics["fees"] > 0 and fee_drag > 40:
+            severity, title = "WARNING", "Комісії поглинають прибуток — не змінювати поточний експеримент"
+            reasons.append(f"Вплив комісій на зафіксований результат: {fee_drag:.0f}%")
+            if bot.status == "RUNNING" and not state["manual_buy_paused"]:
+                actions.append({"code": "STOP_BUYS", "label": "Зупинити нові покупки"})
+        else:
+            severity, title = "NEUTRAL", "Недостатньо даних — спостерігати"
+            reasons.append("Поточний результат близький до нуля")
+
+        if elapsed_days < 7 or metrics["cycles"] < 20:
+            reasons.append(f"Статистика ще не готова: {elapsed_days:.1f}/7 днів і {metrics['cycles']}/20 циклів")
+        if metrics["win_rate_pct"] == 100 and state["unrealized_pnl"] < 0:
+            reasons.append("100% виграшних циклів не враховує збиток відкритих позицій")
+        if bot.recenter_count_today >= bot.max_recenters_per_day:
+            reasons.append("Досягнуто добовий ліміт зсувів сітки")
+        if oldest_open_hours >= 24:
+            reasons.append(f"Найстаріша відкрита позиція утримується близько {oldest_open_hours:.0f} год")
+
+        rows.append({
+            "bot_id": bot.id, "symbol": bot.symbol, "profile": state["strategy_profile"],
+            "status": bot.status, "severity": severity, "recommendation": title,
+            "reasons": reasons, "actions": actions,
+            "metrics": {
+                "budget_quote": bot.budget_quote, "total_pnl": state["total_pnl"],
+                "total_return_pct": total_pct, "realized_pnl": evaluated_pnl,
+                "unrealized_pnl": state["unrealized_pnl"], "fees": metrics["fees"],
+                "fee_drag_pct": fee_drag, "cycles": metrics["cycles"],
+                "elapsed_days": elapsed_days, "deployed_quote": deployed,
+                "deployed_pct": deployed_pct, "win_rate_pct": metrics["win_rate_pct"],
+                "oldest_open_hours": oldest_open_hours, "market_regime": market_regime,
+            },
+        })
+    rows.sort(key=lambda row: ({"DANGER": 0, "WARNING": 1, "NEUTRAL": 2, "GOOD": 3}[row["severity"]], row["metrics"]["total_pnl"]))
+    allocated = sum(bot.budget_quote for bot in active)
+    deployed = sum(row["metrics"]["deployed_quote"] for row in rows)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "active_bots": len(active), "starting_balance": portfolio.starting_quote,
+            "total_equity": portfolio_state["total_equity"],
+            "total_result": portfolio_state["total_equity"] - portfolio.starting_quote,
+            "realized_pnl": portfolio_state["realized_pnl"],
+            "unrealized_pnl": portfolio_state["unrealized_pnl"],
+            "fees": portfolio_state["fees_paid"], "allocated_budget": allocated,
+            "deployed_quote": deployed,
+            "capital_utilization_pct": deployed / allocated * 100 if allocated else 0,
+        },
+        "bots": rows,
+        "caveat": "Виграшні цикли та зафіксована просадка не враховують збиток ще відкритих позицій.",
+    }
 
 
 @app.get("/api/monitoring/status")
