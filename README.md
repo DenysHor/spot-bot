@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.55.0**. In `TESTNET` mode, PAPER strategies continue collecting statistics while one isolated Binance Spot Testnet Grid bot trades virtual funds. The dashboard uses Testnet-native pricing and candles, localized order diagnostics, explicit environment labels, and manual/stale synchronization controls; LIVE execution remains disabled.
+> Current development version: **0.55.1**. In `TESTNET` mode, PAPER strategies continue collecting statistics while one isolated Binance Spot Testnet Grid bot trades virtual funds. The dashboard uses Testnet-native pricing and candles, localized compact order diagnostics, explicit environment labels, and manual/stale synchronization controls; LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.

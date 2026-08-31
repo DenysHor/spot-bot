@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.55.0" in page.text
-    assert "/static/advisor.css?v=0.55.0" in page.text
-    assert "/static/app.js?v=0.55.0" in page.text
+    assert "/static/styles.css?v=0.55.1" in page.text
+    assert "/static/advisor.css?v=0.55.1" in page.text
+    assert "/static/app.js?v=0.55.1" in page.text
     assert "TESTNET-бот уже працює" in script.text
     assert "Ціна Testnet" in script.text
     assert "Найближча купівля" in script.text
@@ -108,6 +108,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Внутрішня помилка сервера" in script.text
     assert ".comparison-table td:nth-child(8)::before" in styles.text
     assert ".health-reason" in styles.text
+    assert "#testnet-bot .table-wrap table" in styles.text
     assert ".bot-detail .bot-stats{grid-template-columns:repeat(4" in styles.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
