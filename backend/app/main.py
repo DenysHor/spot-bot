@@ -382,6 +382,26 @@ notifier = TelegramNotifier(
 async def notify_testnet_event(event: str, bot, order) -> None:
     if not notifier.enabled:
         return
+    if event == "SYNC_BATCH":
+        fills = order.get("fills", [])
+        buys = sum(row["event"] == "BUY_FILLED" for row in fills)
+        sells = sum(row["event"] == "SELL_FILLED" for row in fills)
+        prices = [float(row["price"]) for row in fills if row.get("price")]
+        result = float(order.get("realized_pnl_delta", 0))
+        price_range = ""
+        if prices:
+            low, high = min(prices), max(prices)
+            price_range = f"\nДіапазон цін: {low:,.2f}–{high:,.2f} USDT".replace(",", " ")
+        await notifier.send(
+            "TESTNET_SYNC_BATCH",
+            f"🧪 {bot.symbol} · TESTNET\n"
+            f"Синхронізовано виконані заявки:\n"
+            f"• Покупок: {buys}\n• Продажів: {sells}\n"
+            f"• Завершено циклів: {sells}\n"
+            f"• Результат циклів: {result:+.2f} USDT"
+            f"{price_range}\nТільки віртуальні кошти.",
+        )
+        return
     labels = {
         "BUY_FILLED": "Купівлю виконано; створено парний продаж",
         "SELL_FILLED": "Продаж виконано; цикл завершено",
@@ -391,7 +411,7 @@ async def notify_testnet_event(event: str, bot, order) -> None:
     label = labels.get(event)
     if not label:
         return
-    price_line = f"\nЦіна: {order.price:.8f} USDT" if order else ""
+    price_line = f"\nЦіна: {order.price:,.2f} USDT".replace(",", " ") if order else ""
     await notifier.send(
         f"TESTNET_{event}",
         f"🧪 {bot.symbol} · TESTNET\n{label}{price_line}\nТільки віртуальні кошти.",
@@ -439,7 +459,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.55.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.56.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -579,7 +599,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.55.1",
+        "version": "0.56.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},

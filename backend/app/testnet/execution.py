@@ -97,18 +97,22 @@ class TestnetGridEngine:
         account = await self.client.account()
         return [row for row in account.get("balances", []) if float(row["free"]) or float(row["locked"])]
 
-    async def _emit(self, event: str, bot: TestnetBot, order: TestnetOrder | None = None) -> None:
+    async def _notify(self, event: str, bot: TestnetBot, payload=None) -> None:
+        if self.event_sink is not None:
+            try:
+                await self.event_sink(event, bot, payload)
+            except Exception:
+                pass
+
+    async def _emit(self, event: str, bot: TestnetBot, order: TestnetOrder | None = None, notify: bool = True) -> None:
         bot.events.append({
             "timestamp": self.now(), "event": event,
             "side": order.side if order else "", "price": order.price if order else 0.0,
             "order_id": order.order_id if order else 0,
         })
         bot.events = bot.events[-100:]
-        if self.event_sink is not None:
-            try:
-                await self.event_sink(event, bot, order)
-            except Exception:
-                pass
+        if notify:
+            await self._notify(event, bot, order)
 
     async def start(self, symbol: str, budget_quote: float, step_pct: float, levels: int, reference_price: float) -> TestnetBot:
         if self.bot and self.bot.status in {"RUNNING", "BUY_PAUSED", "DRAINING"}:
@@ -171,6 +175,8 @@ class TestnetGridEngine:
         try:
             rules = await self.client.symbol_rules(bot.symbol)
             bot.last_price = await self.client.price(bot.symbol)
+            fill_events: list[tuple[str, TestnetOrder]] = []
+            realized_before = bot.realized_pnl
             for tracked in list(bot.orders):
                 current = await self.client.order(bot.symbol, tracked.order_id)
                 if not tracked.created_at and current.get("time"):
@@ -185,7 +191,8 @@ class TestnetGridEngine:
                         result = await self.client.create_limit_order(bot.symbol, "SELL", qty, sell_price)
                         source_cost = tracked.cumulative_quote + quote_fee
                         bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price, source_cost=source_cost, created_at=self.now()))
-                        await self._emit("BUY_FILLED", bot, tracked)
+                        await self._emit("BUY_FILLED", bot, tracked, notify=False)
+                        fill_events.append(("BUY_FILLED", tracked))
                     else:
                         bot.completed_cycles += 1
                         bot.realized_pnl += tracked.cumulative_quote - quote_fee - tracked.source_cost
@@ -194,7 +201,15 @@ class TestnetGridEngine:
                             qty = self.client.floor_to_step(net_quantity, rules["step_size"])
                             result = await self.client.create_limit_order(bot.symbol, "BUY", qty, buy_price)
                             bot.orders.append(TestnetOrder(int(result["orderId"]), "BUY", float(buy_price), float(qty), created_at=self.now()))
-                        await self._emit("SELL_FILLED", bot, tracked)
+                        await self._emit("SELL_FILLED", bot, tracked, notify=False)
+                        fill_events.append(("SELL_FILLED", tracked))
+            if len(fill_events) == 1:
+                await self._notify(fill_events[0][0], bot, fill_events[0][1])
+            elif fill_events:
+                await self._notify("SYNC_BATCH", bot, {
+                    "fills": [{"event": event, "price": order.price, "order_id": order.order_id} for event, order in fill_events],
+                    "realized_pnl_delta": bot.realized_pnl - realized_before,
+                })
             if bot.soft_complete and not any(x.side == "SELL" and x.status in {"NEW", "PARTIALLY_FILLED"} for x in bot.orders):
                 bot.status = "STOPPED"
             bot.last_sync_at, bot.last_error = self.now(), ""

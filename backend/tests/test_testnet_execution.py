@@ -83,3 +83,30 @@ def test_testnet_grid_stop_buys_keeps_sell_orders():
         assert all(order.status == "CANCELED" for order in bot.orders if order.side == "BUY")
         assert next(order for order in bot.orders if order.side == "SELL").status == "NEW"
     asyncio.run(scenario())
+
+
+def test_testnet_grid_batches_multiple_fills_into_one_notification():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        notifications = []
+
+        async def sink(event, bot, payload):
+            notifications.append((event, payload))
+
+        engine.event_sink = sink
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        notifications.clear()
+        for order in bot.orders:
+            client.statuses[order.order_id] = {
+                "status": "FILLED", "executedQty": "0.5", "cummulativeQuoteQty": "50",
+            }
+        await engine.sync()
+
+        assert len(notifications) == 1
+        event, payload = notifications[0]
+        assert event == "SYNC_BATCH"
+        assert len(payload["fills"]) == 2
+        assert all(row["event"] == "BUY_FILLED" for row in payload["fills"])
+
+    asyncio.run(scenario())
