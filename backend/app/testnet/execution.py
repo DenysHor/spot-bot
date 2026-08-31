@@ -19,6 +19,7 @@ class TestnetOrder:
     cumulative_quote: float = 0.0
     commission_amount: float = 0.0
     commission_asset: str = ""
+    created_at: str = ""
 
 
 @dataclass
@@ -54,6 +55,12 @@ class TestnetBot:
             for order in active if order.side == "SELL" and order.source_cost
         )
         data["total_pnl"] = self.realized_pnl + data["unrealized_pnl"]
+        sync_age = (
+            (datetime.now(timezone.utc) - datetime.fromisoformat(self.last_sync_at)).total_seconds()
+            if self.last_sync_at else None
+        )
+        data["sync_age_seconds"] = sync_age
+        data["sync_stale"] = sync_age is None or sync_age > 60
         return data
 
 
@@ -122,7 +129,10 @@ class TestnetGridEngine:
                 if float(qty_text) < float(rules["min_qty"]):
                     raise ValueError("Розрахована кількість нижча за мінімум Binance")
                 result = await self.client.create_limit_order(bot.symbol, "BUY", qty_text, price_text)
-                bot.orders.append(TestnetOrder(int(result["orderId"]), "BUY", float(price_text), float(qty_text)))
+                bot.orders.append(TestnetOrder(
+                    int(result["orderId"]), "BUY", float(price_text), float(qty_text),
+                    created_at=self.now(),
+                ))
         except Exception:
             for order in bot.orders:
                 try:
@@ -163,6 +173,8 @@ class TestnetGridEngine:
             bot.last_price = await self.client.price(bot.symbol)
             for tracked in list(bot.orders):
                 current = await self.client.order(bot.symbol, tracked.order_id)
+                if not tracked.created_at and current.get("time"):
+                    tracked.created_at = datetime.fromtimestamp(int(current["time"]) / 1000, timezone.utc).isoformat()
                 previous = tracked.status
                 tracked.status = current["status"]
                 if previous != "FILLED" and tracked.status == "FILLED":
@@ -172,7 +184,7 @@ class TestnetGridEngine:
                         qty = self.client.floor_to_step(net_quantity, rules["step_size"])
                         result = await self.client.create_limit_order(bot.symbol, "SELL", qty, sell_price)
                         source_cost = tracked.cumulative_quote + quote_fee
-                        bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price, source_cost=source_cost))
+                        bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price, source_cost=source_cost, created_at=self.now()))
                         await self._emit("BUY_FILLED", bot, tracked)
                     else:
                         bot.completed_cycles += 1
@@ -181,7 +193,7 @@ class TestnetGridEngine:
                             buy_price = self.client.floor_to_step(fill_price / (1 + bot.step_pct / 100), rules["tick_size"])
                             qty = self.client.floor_to_step(net_quantity, rules["step_size"])
                             result = await self.client.create_limit_order(bot.symbol, "BUY", qty, buy_price)
-                            bot.orders.append(TestnetOrder(int(result["orderId"]), "BUY", float(buy_price), float(qty)))
+                            bot.orders.append(TestnetOrder(int(result["orderId"]), "BUY", float(buy_price), float(qty), created_at=self.now()))
                         await self._emit("SELL_FILLED", bot, tracked)
             if bot.soft_complete and not any(x.side == "SELL" and x.status in {"NEW", "PARTIALLY_FILLED"} for x in bot.orders):
                 bot.status = "STOPPED"
@@ -216,7 +228,7 @@ class TestnetGridEngine:
                     sell_price = self.client.floor_to_step(fill_price * (1 + self.bot.step_pct / 100), rules["tick_size"])
                     qty = self.client.floor_to_step(executed, rules["step_size"])
                     result = await self.client.create_limit_order(self.bot.symbol, "SELL", qty, sell_price)
-                    self.bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price))
+                    self.bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price, created_at=self.now()))
         self.bot.buy_enabled = False
         self.bot.soft_complete = soft_complete
         self.bot.status = "DRAINING" if soft_complete else "BUY_PAUSED"

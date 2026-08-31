@@ -50,6 +50,7 @@ def test_testnet_grid_creates_buy_levels_and_paired_sell():
         bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
         assert len(bot.orders) == 2
         assert all(order.side == "BUY" for order in bot.orders)
+        assert all(order.created_at for order in bot.orders)
         first = bot.orders[0]
         client.statuses[first.order_id] = {"status": "FILLED", "executedQty": "0.50505", "cummulativeQuoteQty": "50"}
         client.trade_rows[first.order_id] = [{"commissionAsset": "BTC", "commission": "0.00005"}]
@@ -63,7 +64,10 @@ def test_testnet_grid_creates_buy_levels_and_paired_sell():
         assert bot.completed_cycles == 1
         assert round(bot.realized_pnl, 8) == 0.95
         assert bot.last_price == 100
-        assert bot.snapshot()["virtual_funds"] is True
+        snapshot = bot.snapshot()
+        assert snapshot["virtual_funds"] is True
+        assert snapshot["sync_stale"] is False
+        assert snapshot["sync_age_seconds"] >= 0
     asyncio.run(scenario())
 
 

@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-29  
 Repository: `DenysHor/spot-bot`  
-Current version: `0.54.0`
+Current version: `0.55.0`
 Current implementation: chart axes, pending-order labels, and historical PAPER fill markers
 
 ## Non-negotiable safety rules

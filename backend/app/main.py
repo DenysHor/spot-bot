@@ -416,15 +416,14 @@ async def lifespan(app: FastAPI):
     global market_scanner_task
     validate_cloud_security(settings.secure_cookies, settings.dashboard_password, settings.session_secret)
     app.state.last_backup = store.create_backup(settings.sqlite_backup_count)
-    if settings.trading_mode == "PAPER":
+    if settings.trading_mode in {"PAPER", "TESTNET"}:
         grid_engine.start_background()
         dca_engine.start_background()
         signal_engine.start_background()
         notifier.start_background()
         market_scanner_task = asyncio.create_task(market_scanner_forever())
-    elif settings.trading_mode == "TESTNET":
+    if settings.trading_mode == "TESTNET":
         testnet_engine.start_background()
-        notifier.start_background()
     yield
     if market_scanner_task and not market_scanner_task.done():
         market_scanner_task.cancel()
@@ -440,7 +439,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.54.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.55.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -580,10 +579,11 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.54.0",
+        "version": "0.55.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
-        "grid_background_worker": settings.trading_mode == "PAPER",
+        "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
+        "paper_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
         "testnet_background_worker": settings.trading_mode == "TESTNET",
         "authentication_enabled": auth.enabled,
     }
@@ -659,6 +659,47 @@ async def testnet_grid_bot() -> dict:
         "bot": testnet_engine.bot.snapshot() if testnet_engine.bot else None,
         "virtual_funds": True, "live_execution_enabled": False,
     }
+
+
+@app.post("/api/testnet/grid-bot/sync")
+async def testnet_grid_sync() -> dict:
+    require_testnet_mode()
+    if not testnet_engine.bot:
+        raise HTTPException(status_code=404, detail="TESTNET-бота немає")
+    bot = await testnet_engine.sync()
+    return bot.snapshot()
+
+
+@app.get("/api/testnet/market/{symbol}")
+async def testnet_market_snapshot(symbol: str) -> dict:
+    require_testnet_mode()
+    try:
+        ticker = await testnet.ticker_24h(symbol)
+        return {
+            "symbol": symbol.upper(), "price": float(ticker["lastPrice"]),
+            "change_24h_pct": float(ticker["priceChangePercent"]),
+            "volume_24h": float(ticker["volume"]), "quote_volume_24h": float(ticker["quoteVolume"]),
+            "environment": "TESTNET",
+        }
+    except BinanceTestnetError as exc:
+        raise HTTPException(status_code=502, detail=f"Testnet market data: {exc}") from exc
+
+
+@app.get("/api/testnet/market/{symbol}/klines")
+async def testnet_market_klines(symbol: str, interval: str = "1h", limit: int = 120) -> dict:
+    require_testnet_mode()
+    allowed = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"}
+    if interval not in allowed or limit < 2 or limit > 500:
+        raise HTTPException(status_code=400, detail="Некоректний інтервал або кількість свічок")
+    try:
+        rows = await testnet.klines(symbol, interval, limit)
+        return {"symbol": symbol.upper(), "interval": interval, "environment": "TESTNET", "candles": [
+            {"open_time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
+             "low": float(row[3]), "close": float(row[4]), "close_time": int(row[6])}
+            for row in rows
+        ]}
+    except BinanceTestnetError as exc:
+        raise HTTPException(status_code=502, detail=f"Testnet candles: {exc}") from exc
 
 
 @app.post("/api/testnet/grid-bot/start")

@@ -79,6 +79,15 @@ class BinanceTestnetClient:
         data = await self._public(f"/api/v3/ticker/price?symbol={symbol.upper()}")
         return float(data["price"])
 
+    async def ticker_24h(self, symbol: str) -> dict:
+        return await self._public(f"/api/v3/ticker/24hr?symbol={symbol.upper()}")
+
+    async def klines(self, symbol: str, interval: str = "1h", limit: int = 120) -> list[list]:
+        safe_limit = max(2, min(limit, 500))
+        return await self._public(
+            f"/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={safe_limit}"
+        )
+
     @staticmethod
     def floor_to_step(value: float | str, step: float | str) -> str:
         number, quantum = Decimal(str(value)), Decimal(str(step))
