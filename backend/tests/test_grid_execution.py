@@ -132,6 +132,29 @@ def test_grid_with_open_sell_must_be_paused_not_stopped():
     assert bot.status == "PAUSED"
 
 
+def test_emergency_liquidation_sells_open_positions_and_stops_bot():
+    portfolio = PaperPortfolio()
+    broker = PaperBroker(portfolio=portfolio)
+
+    async def fake_price(symbol: str) -> float:
+        return 100.0
+
+    engine = GridExecutionEngine(broker=broker, price_provider=fake_price)
+    bot = engine.start_bot("SOLUSDT", "SOL", 100.0, 1000.0, 10.0, 2)
+    asyncio.run(engine.tick_bot(bot.id, price=90.0))
+    assert any(order.side == "SELL" for order in bot.open_orders)
+
+    bot.last_price = 80.0
+    result = engine.liquidate_bot(bot.id)
+
+    assert result.status == "STOPPED"
+    assert result.open_orders == []
+    assert result.spent_quote == 0
+    assert portfolio.position("SOL").quantity == 0
+    assert any(event.event == "EMERGENCY_LIQUIDATION" for event in result.events)
+    assert result.realized_pnl < 0
+
+
 def test_trailing_up_recenters_unfilled_buys_without_exceeding_level_count():
     portfolio = PaperPortfolio()
     broker = PaperBroker(portfolio=portfolio)

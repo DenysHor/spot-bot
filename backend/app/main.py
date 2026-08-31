@@ -373,7 +373,7 @@ async def lifespan(app: FastAPI):
     await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.47.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.48.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -506,7 +506,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.47.0",
+        "version": "0.48.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1014,6 +1014,16 @@ async def grid_stop(bot_id: str) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.post("/api/grid/bots/{bot_id}/liquidate")
+async def grid_liquidate(bot_id: str) -> dict:
+    if settings.trading_mode != "PAPER":
+        raise HTTPException(status_code=409, detail="Emergency liquidation is PAPER-only")
+    try:
+        return grid_engine.liquidate_bot(bot_id).snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/grid/bots/{bot_id}/pause")
 async def grid_pause(bot_id: str) -> dict:
     try:
@@ -1191,6 +1201,8 @@ async def analytics_advisor() -> dict:
             reasons.append("Досягнуто добовий ліміт зсувів сітки")
         if oldest_open_hours >= 24:
             reasons.append(f"Найстаріша відкрита позиція утримується близько {oldest_open_hours:.0f} год")
+        if severity == "DANGER" and deployed > 0:
+            actions.append({"code": "LIQUIDATE", "label": "Продати все зараз"})
 
         rows.append({
             "bot_id": bot.id, "symbol": bot.symbol, "profile": state["strategy_profile"],

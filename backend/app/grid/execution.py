@@ -373,6 +373,48 @@ class GridExecutionEngine:
         self._persist(bot)
         return bot
 
+    def liquidate_bot(self, bot_id: str) -> GridBotState:
+        """Sell every position owned by this PAPER bot at its latest known price."""
+        bot = self.get_bot(bot_id)
+        if bot.status == "STOPPED":
+            raise ValueError("Stopped Grid bot cannot be liquidated")
+        if bot.last_price <= 0:
+            raise ValueError("Current market price is unavailable")
+        sell_orders = [order for order in bot.open_orders if order.side == "SELL"]
+        grid_quantity = sum(order.quantity for order in sell_orders)
+        total_quantity = grid_quantity + bot.seed_quantity
+        if total_quantity <= 0:
+            raise ValueError("Grid bot has no open position to sell")
+
+        trade = self.broker.market_sell(
+            bot.symbol, bot.base_asset, bot.last_price, total_quantity,
+        )
+        net_price = bot.last_price * (1 - self.broker.fee_rate)
+        forced_grid_pnl = sum(
+            order.quantity * net_price - order.source_buy_cost for order in sell_orders
+        )
+        forced_seed_pnl = bot.seed_quantity * net_price - bot.seed_cost_quote
+        bot.realized_pnl += forced_grid_pnl
+        bot.seed_realized_pnl += forced_seed_pnl
+        bot.events.append(GridEvent(
+            timestamp=self._now(), event="EMERGENCY_LIQUIDATION", price=bot.last_price,
+            side="SELL", quantity=trade.quantity, quote_amount=trade.quote_amount,
+            realized_cycle_pnl=forced_grid_pnl + forced_seed_pnl,
+            message="All open PAPER positions sold immediately at the current price",
+        ))
+        bot.open_orders.clear()
+        bot.spent_quote = 0.0
+        bot.seed_quantity = 0.0
+        bot.seed_cost_quote = 0.0
+        bot.status = "STOPPED"
+        bot.drain_mode = False
+        bot.events.append(GridEvent(
+            timestamp=self._now(), event="BOT_STOPPED", price=bot.last_price,
+            message="Stopped after emergency PAPER liquidation",
+        ))
+        self._persist(bot)
+        return bot
+
     def pause_bot(self, bot_id: str, reason: str = "Paused by user") -> GridBotState:
         bot = self.get_bot(bot_id)
         if bot.status != "RUNNING":
