@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.53.1**. Grid, Smart DCA, and Signal execution is PAPER by default. A separately gated `TESTNET` mode supports one Binance Spot Testnet Grid bot using virtual funds; LIVE execution remains disabled.
+> Current development version: **0.53.2**. Grid, Smart DCA, and Signal execution is PAPER by default. A separately gated `TESTNET` mode supports one Binance Spot Testnet Grid bot using virtual funds; LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.
