@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.48.0" in page.text
-    assert "/static/advisor.css?v=0.48.0" in page.text
-    assert "/static/app.js?v=0.48.0" in page.text
+    assert "/static/styles.css?v=0.49.0" in page.text
+    assert "/static/advisor.css?v=0.49.0" in page.text
+    assert "/static/app.js?v=0.49.0" in page.text
     assert "Аналітика портфеля" in page.text
     assert 'id="advisor-bots"' in page.text
     assert "/api/analytics/advisor" in script.text
@@ -36,6 +36,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "Зупинити лише нові покупки" in script.text
     assert "/api/grid/bots/${id}/${route}" in script.text
     assert "Продати ВСІ відкриті позиції" in script.text
+    assert "Перейти до Сигнальної стратегії" in script.text
+    assert "Чинний Grid не буде змінено автоматично" in script.text
     assert "Smart DCA" in page.text
     assert "Оптимізація сітки" in page.text
     assert "Перевірка 70/30" in page.text

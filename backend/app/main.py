@@ -188,6 +188,38 @@ async def signal_analysis(symbol: str, base_asset: str) -> dict:
     return analyze_symbol(ticker, rows, base_asset)
 
 
+def recommend_automation(analysis: dict, min_signal_score: int = 65) -> dict:
+    """Choose one PAPER automation family from the same market evidence."""
+    regime = analysis["regime"]
+    signal_ready = (
+        analysis["score"] >= min_signal_score
+        and analysis["price"] > analysis["ema20"] > analysis["ema50"]
+        and 45 <= analysis["rsi14"] <= 68
+        and analysis["volume_ratio"] >= 1.1
+    )
+    if regime["name"] == "RANGE":
+        strategy = "GRID"
+        profile = "RANGE_GRID"
+        reason = "Боковий режим більше відповідає заробітку на коливаннях сітки"
+    elif regime["name"] == "UPTREND" and signal_ready:
+        strategy = "SIGNAL"
+        profile = "SIGNAL_MOMENTUM"
+        reason = "Тренд, RSI та обсяг одночасно підтверджують Сигнальний вхід"
+    elif regime["name"] == "UPTREND":
+        strategy = "GRID"
+        profile = regime["recommended_profile"]
+        reason = "Є висхідний тренд, але Сигнальний вхід ще не має всіх підтверджень"
+    else:
+        strategy = "WAIT"
+        profile = "WAIT"
+        reason = "Поточний режим не дає достатньо безпечної переваги для нового PAPER-входу"
+    return {
+        "strategy": strategy, "profile": profile, "reason": reason,
+        "signal_ready": signal_ready, "signal_score": analysis["score"],
+        "evaluated": ["RANGE_GRID", "TRAILING_GRID", "HYBRID", "SIGNAL", "WAIT"],
+    }
+
+
 def automation_budget_status(symbol: str, requested_budget: float) -> dict:
     active_grid = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
     active_dca = [bot for bot in dca_engine.bots.values() if bot.status != "STOPPED"]
@@ -259,6 +291,7 @@ async def grid_preflight_analysis(request) -> dict:
     if request.step_pct < recommended_step * 0.6 or request.step_pct > recommended_step * 2:
         warnings.append(f"Поточний крок відрізняється від орієнтира {recommended_step:.2f}%")
     regime = market_analysis["regime"]
+    automation = recommend_automation(market_analysis)
     profile_evidence = None
     resolved_profile = regime["recommended_profile"] if request.strategy_profile == "AUTO" else request.strategy_profile
     if request.strategy_profile == "AUTO" and regime["name"] == "UPTREND":
@@ -273,7 +306,8 @@ async def grid_preflight_analysis(request) -> dict:
     regime_override = request.strategy_profile != "AUTO" and not regime["new_bot_allowed"]
     if regime_override:
         warnings.append("Обраний вручну профіль суперечить рекомендації WAIT")
-    launch_allowed = budget["allowed"] and (regime["new_bot_allowed"] or regime_override)
+    grid_is_recommended = automation["strategy"] == "GRID"
+    launch_allowed = budget["allowed"] and ((regime["new_bot_allowed"] and grid_is_recommended) or regime_override)
     verdict = "BLOCKED" if not launch_allowed else "CAUTION" if warnings else "SUITABLE"
     return {
         "symbol": symbol,
@@ -305,10 +339,12 @@ async def grid_preflight_analysis(request) -> dict:
                 "validation_passed": profile_evidence["recommendation"]["validation_passed"],
                 "validation_return_pct": profile_evidence["recommendation"]["validation_performance"]["return_pct"],
             } if profile_evidence else None),
+            "automation": automation,
         },
         "warnings": warnings,
         "recommendation": (
             "; ".join(budget["reasons"]) if not budget["allowed"]
+            else "Рекомендовано Сигнальну PAPER-стратегію замість Grid" if automation["strategy"] == "SIGNAL" and request.strategy_profile == "AUTO"
             else "Рекомендація WAIT: новий бот в AUTO не запускається" if not launch_allowed
             else "Можна запускати в PAPER із підвищеною увагою до попереджень" if warnings
             else "Пара та бюджет відповідають поточним PAPER-обмеженням"
@@ -373,7 +409,7 @@ async def lifespan(app: FastAPI):
     await signal_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.48.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.49.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -506,7 +542,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.48.0",
+        "version": "0.49.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": settings.trading_mode == "LIVE",
         "grid_background_worker": settings.trading_mode == "PAPER",
@@ -1115,6 +1151,13 @@ async def analytics_portfolio_comparison() -> dict:
 @app.get("/api/analytics/advisor")
 async def analytics_advisor() -> dict:
     active = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
+    fresh_results = await asyncio.gather(*(
+        signal_analysis(bot.symbol, bot.base_asset) for bot in active
+    ), return_exceptions=True)
+    fresh_analysis = {
+        bot.symbol: result for bot, result in zip(active, fresh_results)
+        if not isinstance(result, Exception)
+    }
     prices = {bot.base_asset: bot.last_price for bot in active if bot.last_price > 0}
     portfolio_state = portfolio.snapshot(prices)
     scanner_items = ((market_scanner_cache.get("result") or {}).get("items") or [])
@@ -1145,7 +1188,11 @@ async def analytics_advisor() -> dict:
             )
         ]
         oldest_open_hours = max(0.0, (now - min(matching_buys)).total_seconds() / 3600) if matching_buys else 0.0
-        market_item = scanner_by_symbol.get(bot.symbol)
+        market_item = fresh_analysis.get(bot.symbol) or scanner_by_symbol.get(bot.symbol)
+        automation = recommend_automation(market_item) if market_item else {
+            "strategy": "UNKNOWN", "profile": "UNKNOWN", "reason": "Актуальний аналіз ринку недоступний",
+            "signal_ready": False, "signal_score": 0,
+        }
         if not market_item:
             market_regime = "НЕ ОЦІНЕНО"
         else:
@@ -1193,6 +1240,14 @@ async def analytics_advisor() -> dict:
             severity, title = "NEUTRAL", "Недостатньо даних — спостерігати"
             reasons.append("Поточний результат близький до нуля")
 
+        if automation["strategy"] == "SIGNAL":
+            reasons.append(f"Нова оцінка рекомендує Сигнальну стратегію: {automation['reason']}")
+            if severity in {"GOOD", "NEUTRAL"}:
+                severity, title = "WARNING", "Поведінка ринку змінилася — розглянути Сигнальну стратегію"
+            actions.append({"code": "PREPARE_SIGNAL", "label": "Підготувати Signal"})
+        elif automation["strategy"] == "WAIT" and market_regime != "НЕ ОЦІНЕНО":
+            reasons.append("Для нового входу зараз рекомендовано чекати, а не змінювати стратегію поспіхом")
+
         if elapsed_days < 7 or metrics["cycles"] < 20:
             reasons.append(f"Статистика ще не готова: {elapsed_days:.1f}/7 днів і {metrics['cycles']}/20 циклів")
         if metrics["win_rate_pct"] == 100 and state["unrealized_pnl"] < 0:
@@ -1216,6 +1271,8 @@ async def analytics_advisor() -> dict:
                 "elapsed_days": elapsed_days, "deployed_quote": deployed,
                 "deployed_pct": deployed_pct, "win_rate_pct": metrics["win_rate_pct"],
                 "oldest_open_hours": oldest_open_hours, "market_regime": market_regime,
+                "recommended_strategy": automation["strategy"],
+                "signal_score": automation["signal_score"],
             },
         })
     rows.sort(key=lambda row: ({"DANGER": 0, "WARNING": 1, "NEUTRAL": 2, "GOOD": 3}[row["severity"]], row["metrics"]["total_pnl"]))

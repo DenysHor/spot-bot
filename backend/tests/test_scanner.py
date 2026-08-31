@@ -35,6 +35,23 @@ def test_symbol_analysis_produces_explainable_paper_observation():
     assert result["regime"]["recommended_profile"] in {"RANGE_GRID", "TRAILING_GRID", "WAIT"}
 
 
+def test_unified_recommendation_considers_signal_and_grid_strategies():
+    analysis = {
+        "score": 72, "price": 110.0, "ema20": 105.0, "ema50": 100.0,
+        "rsi14": 58.0, "volume_ratio": 1.3,
+        "regime": {"name": "UPTREND", "recommended_profile": "TRAILING_GRID"},
+    }
+
+    signal = main.recommend_automation(analysis)
+    analysis["regime"] = {"name": "RANGE", "recommended_profile": "RANGE_GRID"}
+    grid = main.recommend_automation(analysis)
+
+    assert signal["strategy"] == "SIGNAL"
+    assert signal["signal_ready"] is True
+    assert grid["strategy"] == "GRID"
+    assert set(signal["evaluated"]) == {"RANGE_GRID", "TRAILING_GRID", "HYBRID", "SIGNAL", "WAIT"}
+
+
 def test_market_scanner_uses_top_active_usdt_pairs_and_cache(monkeypatch, tmp_path):
     async def fake_exchange_info():
         return {"symbols": [
