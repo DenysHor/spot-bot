@@ -407,6 +407,7 @@ async def notify_testnet_event(event: str, bot, order) -> None:
         "SELL_FILLED": "Продаж виконано; цикл завершено",
         "BUY_AUTO_PAUSED": "Нові покупки автоматично призупинено через нестачу тестового USDT",
         "SYNC_ERROR": f"Помилка синхронізації: {bot.last_error}",
+        "EMERGENCY_STOP": "Аварійна зупинка: усі відкриті TESTNET-заявки скасовано",
     }
     label = labels.get(event)
     if not label:
@@ -459,7 +460,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.56.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.57.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -599,7 +600,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.56.0",
+        "version": "0.57.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -690,6 +691,17 @@ async def testnet_grid_sync() -> dict:
     return bot.snapshot()
 
 
+@app.get("/api/testnet/reconciliation")
+async def testnet_reconciliation() -> dict:
+    require_testnet_mode()
+    if not testnet_engine.bot:
+        raise HTTPException(status_code=404, detail="TESTNET-бота немає")
+    try:
+        return await testnet_engine.reconciliation()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=502, detail=f"Перевірка TESTNET: {exc}") from exc
+
+
 @app.get("/api/testnet/market/{symbol}")
 async def testnet_market_snapshot(symbol: str) -> dict:
     require_testnet_mode()
@@ -760,6 +772,15 @@ async def testnet_grid_stop() -> dict:
     require_testnet_mode()
     try:
         return (await testnet_engine.stop()).snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/testnet/grid-bot/emergency-stop")
+async def testnet_grid_emergency_stop() -> dict:
+    require_testnet_mode()
+    try:
+        return (await testnet_engine.emergency_stop()).snapshot()
     except (ValueError, BinanceTestnetError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

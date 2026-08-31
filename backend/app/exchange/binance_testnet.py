@@ -114,6 +114,9 @@ class BinanceTestnetClient:
     async def cancel_order(self, symbol: str, order_id: int) -> dict:
         return await self._signed("DELETE", "/api/v3/order", {"symbol": symbol.upper(), "orderId": order_id})
 
+    async def cancel_open_orders(self, symbol: str) -> list[dict]:
+        return await self._signed("DELETE", "/api/v3/openOrders", {"symbol": symbol.upper()})
+
     async def trades(self, symbol: str, order_id: int) -> list[dict]:
         return await self._signed("GET", "/api/v3/myTrades", {
             "symbol": symbol.upper(), "orderId": order_id, "limit": 100,

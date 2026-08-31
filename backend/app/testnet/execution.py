@@ -73,6 +73,7 @@ class TestnetGridEngine:
         self.bot: TestnetBot | None = self._load()
         self._task: asyncio.Task | None = None
         self._running = False
+        self._sync_lock = asyncio.Lock()
         self.event_sink = None
 
     @staticmethod
@@ -96,6 +97,56 @@ class TestnetGridEngine:
     async def balances(self) -> list[dict]:
         account = await self.client.account()
         return [row for row in account.get("balances", []) if float(row["free"]) or float(row["locked"])]
+
+    async def _reconciliation_snapshot(self) -> dict:
+        if not self.bot:
+            raise ValueError("TESTNET-бота немає")
+        bot = self.bot
+        account, exchange_orders, rules = await asyncio.gather(
+            self.client.account(), self.client.open_orders(bot.symbol), self.client.symbol_rules(bot.symbol),
+        )
+        tracked = [order for order in bot.orders if order.status in {"NEW", "PARTIALLY_FILLED"}]
+        tracked_ids = {order.order_id for order in tracked}
+        exchange_ids = {int(order["orderId"]) for order in exchange_orders}
+        missing = sorted(tracked_ids - exchange_ids)
+        untracked = sorted(exchange_ids - tracked_ids)
+        levels: dict[tuple[str, float], list[int]] = {}
+        for order in tracked:
+            levels.setdefault((order.side, order.price), []).append(order.order_id)
+        duplicates = [ids for ids in levels.values() if len(ids) > 1]
+        buy_reserved = sum(order.price * max(0, order.quantity - order.executed_quantity) for order in tracked if order.side == "BUY")
+        sell_reserved = sum(order.source_cost for order in tracked if order.side == "SELL")
+        used_budget = buy_reserved + sell_reserved
+        balances = {row["asset"]: row for row in account.get("balances", [])}
+        quote_locked = float(balances.get(rules["quote_asset"], {}).get("locked", 0))
+        base_locked = float(balances.get(rules["base_asset"], {}).get("locked", 0))
+        expected_base = sum(max(0, order.quantity - order.executed_quantity) for order in tracked if order.side == "SELL")
+        snapshot = bot.snapshot()
+        issues = []
+        if missing:
+            issues.append({"severity": "CRITICAL", "message": f"{len(missing)} заявок застосунку відсутні на Binance"})
+        if untracked:
+            issues.append({"severity": "CRITICAL", "message": f"{len(untracked)} заявок Binance не належать поточному боту"})
+        if duplicates:
+            issues.append({"severity": "WARNING", "message": f"Виявлено дубльовані рівні: {len(duplicates)}"})
+        if used_budget > bot.budget_quote * 1.02:
+            issues.append({"severity": "CRITICAL", "message": "Залучення перевищує бюджет бота"})
+        if quote_locked + 0.02 < buy_reserved:
+            issues.append({"severity": "CRITICAL", "message": "Заблокованого USDT менше, ніж потрібно для заявок купівлі"})
+        if base_locked + 1e-10 < expected_base:
+            issues.append({"severity": "CRITICAL", "message": f"Заблокованого {rules['base_asset']} менше, ніж потрібно для продажів"})
+        if snapshot["sync_stale"]:
+            issues.append({"severity": "WARNING", "message": "Синхронізація не оновлювалася понад хвилину"})
+        status = "CRITICAL" if any(row["severity"] == "CRITICAL" for row in issues) else "WARNING" if issues else "SAFE"
+        return {
+            "status": status, "checked_at": self.now(), "symbol": bot.symbol,
+            "tracked_open_orders": len(tracked_ids), "exchange_open_orders": len(exchange_ids),
+            "missing_order_ids": missing, "untracked_order_ids": untracked, "duplicate_order_groups": duplicates,
+            "budget_quote": bot.budget_quote, "used_budget": used_budget,
+            "quote_locked": quote_locked, "expected_quote_locked": buy_reserved,
+            "base_asset": rules["base_asset"], "base_locked": base_locked, "expected_base_locked": expected_base,
+            "issues": issues, "virtual_funds": True,
+        }
 
     async def _notify(self, event: str, bot: TestnetBot, payload=None) -> None:
         if self.event_sink is not None:
@@ -123,8 +174,9 @@ class TestnetGridEngine:
         tranche = budget_quote / levels
         if tranche < float(rules["min_notional"]):
             raise ValueError(f"Одна заявка має бути не меншою за {rules['min_notional']} USDT")
+        created_at = self.now()
         bot = TestnetBot(symbol=symbol.upper(), budget_quote=budget_quote, step_pct=step_pct, levels=levels,
-                         status="RUNNING", created_at=self.now(), last_price=reference_price)
+                         status="RUNNING", created_at=created_at, last_sync_at=created_at, last_price=reference_price)
         try:
             for level in range(1, levels + 1):
                 price = reference_price * (1 - step_pct / 100 * level)
@@ -168,7 +220,7 @@ class TestnetGridEngine:
         net_quantity = quantity - commissions.get(base_asset, 0.0)
         return quote / quantity, net_quantity, quote_fee
 
-    async def sync(self) -> TestnetBot | None:
+    async def _sync_once(self) -> TestnetBot | None:
         bot = self.bot
         if not bot or bot.status == "STOPPED":
             return bot
@@ -183,6 +235,8 @@ class TestnetGridEngine:
                     tracked.created_at = datetime.fromtimestamp(int(current["time"]) / 1000, timezone.utc).isoformat()
                 previous = tracked.status
                 tracked.status = current["status"]
+                tracked.executed_quantity = float(current.get("executedQty", tracked.executed_quantity))
+                tracked.cumulative_quote = float(current.get("cummulativeQuoteQty", tracked.cumulative_quote))
                 if previous != "FILLED" and tracked.status == "FILLED":
                     fill_price, net_quantity, quote_fee = await self._fill_details(bot, tracked, current)
                     if tracked.side == "BUY":
@@ -227,6 +281,15 @@ class TestnetGridEngine:
         self._save()
         return bot
 
+    async def sync(self) -> TestnetBot | None:
+        async with self._sync_lock:
+            return await self._sync_once()
+
+    async def reconciliation(self) -> dict:
+        async with self._sync_lock:
+            await self._sync_once()
+            return await self._reconciliation_snapshot()
+
     async def stop_buys(self, soft_complete: bool = False) -> TestnetBot:
         if not self.bot:
             raise ValueError("TESTNET-бота немає")
@@ -261,6 +324,18 @@ class TestnetGridEngine:
                 except Exception:
                     pass
         self.bot.status, self.bot.buy_enabled = "STOPPED", False
+        self._save()
+        return self.bot
+
+    async def emergency_stop(self) -> TestnetBot:
+        if not self.bot:
+            raise ValueError("TESTNET-бота немає")
+        await self.client.cancel_open_orders(self.bot.symbol)
+        for order in self.bot.orders:
+            if order.status in {"NEW", "PARTIALLY_FILLED"}:
+                order.status = "CANCELED"
+        self.bot.status, self.bot.buy_enabled = "STOPPED", False
+        await self._emit("EMERGENCY_STOP", self.bot)
         self._save()
         return self.bot
 

@@ -10,6 +10,7 @@ class FakeTestnetClient:
         self.created = []
         self.statuses = {}
         self.trade_rows = {}
+        self.extra_open_orders = []
 
     floor_to_step = staticmethod(BinanceTestnetClient.floor_to_step)
 
@@ -36,6 +37,35 @@ class FakeTestnetClient:
     async def cancel_order(self, symbol, order_id):
         self.statuses[order_id]["status"] = "CANCELED"
         return {"orderId": order_id, "status": "CANCELED"}
+
+    async def open_orders(self, symbol):
+        rows = []
+        for order_id, side, quantity, price in self.created:
+            status = self.statuses[order_id]
+            if status["status"] in {"NEW", "PARTIALLY_FILLED"}:
+                rows.append({"orderId": order_id, "side": side, "origQty": quantity, "price": price,
+                             "executedQty": status.get("executedQty", "0")})
+        return rows + self.extra_open_orders
+
+    async def account(self):
+        orders = await self.open_orders("BTCUSDT")
+        quote_locked = sum(float(row["price"]) * (float(row["origQty"]) - float(row.get("executedQty", 0)))
+                           for row in orders if row["side"] == "BUY")
+        base_locked = sum(float(row["origQty"]) - float(row.get("executedQty", 0))
+                          for row in orders if row["side"] == "SELL")
+        return {"balances": [
+            {"asset": "USDT", "free": "1000", "locked": str(quote_locked)},
+            {"asset": "BTC", "free": "1", "locked": str(base_locked)},
+        ]}
+
+    async def cancel_open_orders(self, symbol):
+        canceled = []
+        for order_id, status in self.statuses.items():
+            if status["status"] in {"NEW", "PARTIALLY_FILLED"}:
+                status["status"] = "CANCELED"
+                canceled.append({"orderId": order_id, "status": "CANCELED"})
+        self.extra_open_orders = []
+        return canceled
 
 
 def test_floor_to_step_never_rounds_up():
@@ -108,5 +138,59 @@ def test_testnet_grid_batches_multiple_fills_into_one_notification():
         assert event == "SYNC_BATCH"
         assert len(payload["fills"]) == 2
         assert all(row["event"] == "BUY_FILLED" for row in payload["fills"])
+
+    asyncio.run(scenario())
+
+
+def test_testnet_reconciliation_is_safe_when_orders_and_balances_match():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        await engine.start("BTCUSDT", 100, 1, 2, 100)
+        audit = await engine.reconciliation()
+
+        assert audit["status"] == "SAFE"
+        assert audit["tracked_open_orders"] == 2
+        assert audit["exchange_open_orders"] == 2
+        assert audit["issues"] == []
+
+    asyncio.run(scenario())
+
+
+def test_testnet_reconciliation_accounts_for_partial_fill_without_false_alert():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        first = bot.orders[0]
+        client.statuses[first.order_id] = {
+            "status": "PARTIALLY_FILLED", "executedQty": str(first.quantity / 2),
+            "cummulativeQuoteQty": str(first.price * first.quantity / 2),
+        }
+        audit = await engine.reconciliation()
+
+        assert audit["status"] == "SAFE"
+        assert first.executed_quantity > 0
+
+    asyncio.run(scenario())
+
+
+def test_testnet_reconciliation_detects_untracked_order_and_emergency_cancels_all():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        client.extra_open_orders.append({
+            "orderId": 999, "side": "BUY", "origQty": "0.1", "price": "90", "executedQty": "0",
+        })
+        audit = await engine.reconciliation()
+        assert audit["status"] == "CRITICAL"
+        assert audit["untracked_order_ids"] == [999]
+
+        stopped = await engine.emergency_stop()
+        assert stopped.status == "STOPPED"
+        assert stopped.buy_enabled is False
+        assert all(order.status == "CANCELED" for order in bot.orders)
+        assert await client.open_orders("BTCUSDT") == []
 
     asyncio.run(scenario())
