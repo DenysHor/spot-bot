@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.45.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.46.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -135,7 +135,7 @@
       <div class="panel-head"><div><p class="eyebrow">ТЕХНІЧНИЙ АНАЛІЗ</p><h2>Сигнальні PAPER-боти</h2></div></div>
       <div class="signal-layout">
         <form id="signal-form" class="signal-form">
-          <label>Binance Spot USDT-пара<input id="signal-symbol" list="symbol-options" value="BTCUSDT" required></label>
+          <label>Binance Spot USDT-пара<div class="symbol-search"><input id="signal-symbol" list="symbol-options" value="BTCUSDT" autocomplete="off" aria-label="Пошук USDT-пари для Сигнального бота" required><small id="signal-symbol-status">Почніть вводити назву монети</small></div></label>
           <label>Бюджет однієї позиції, USDT<input id="signal-budget" type="number" value="100" min="10" step="10" required></label>
           <label>Мінімальна оцінка сигналу<input id="signal-score" type="number" value="65" min="50" max="90" required></label>
           <button id="analyze-signal" class="ghost" type="button">Оцінити можливий результат</button>
@@ -199,6 +199,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.45.0"></script>
+  <script src="/static/app.js?v=0.46.0"></script>
 </body>
 </html>
