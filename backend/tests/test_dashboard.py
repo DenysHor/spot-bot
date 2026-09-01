@@ -15,9 +15,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.57.1" in page.text
-    assert "/static/advisor.css?v=0.57.1" in page.text
-    assert "/static/app.js?v=0.57.1" in page.text
+    assert "/static/styles.css?v=0.58.0" in page.text
+    assert "/static/advisor.css?v=0.58.0" in page.text
+    assert "/static/app.js?v=0.58.0" in page.text
     assert "TESTNET-бот уже працює" in script.text
     assert "Ціна Testnet" in script.text
     assert "Найближча купівля" in script.text
@@ -114,6 +114,8 @@ def test_dashboard_and_static_assets_are_served():
     assert "Аварійна зупинка" in script.text
     assert "#testnet-bot .bot-actions{display:grid" in styles.text
     assert "#testnet-bot .bot-card>ul" in styles.text
+    assert "Date.now()-state.testnetAuditAt>=60000" in script.text
+    assert "loadTestnetBot().catch" in script.text
     assert ".bot-detail .bot-stats{grid-template-columns:repeat(4" in styles.text
     assert "/api/market/symbols/search" in script.text
     assert "/api/grid/preflight" in script.text
