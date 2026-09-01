@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.58.0**. PAPER dashboard readiness no longer waits for slower Binance Testnet account and reconciliation calls. Testnet safety checks are cached for one minute or refreshed manually, while order synchronization continues in the background; LIVE execution remains disabled.
+> Current development version: **0.58.1**. The Testnet bot card renders immediately from persisted bot state, while the slower Binance balance and safety reconciliation load independently. Safety checks remain cached for one minute or refresh manually; LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.
