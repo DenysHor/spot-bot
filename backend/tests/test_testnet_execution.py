@@ -115,6 +115,33 @@ def test_testnet_grid_stop_buys_keeps_sell_orders():
     asyncio.run(scenario())
 
 
+def test_testnet_stop_buys_protects_partial_fill_net_of_commission():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        partial = bot.orders[0]
+        client.statuses[partial.order_id] = {
+            "status": "PARTIALLY_FILLED", "executedQty": "0.50005",
+            "cummulativeQuoteQty": "49.50",
+        }
+        client.trade_rows[partial.order_id] = [
+            {"commissionAsset": "BTC", "commission": "0.00005"},
+        ]
+
+        await engine.stop_buys()
+
+        paired_sell = next(
+            order for order in bot.orders
+            if order.side == "SELL" and order.source_price > 0
+        )
+        assert paired_sell.quantity == 0.5
+        assert paired_sell.source_cost == 49.5
+        assert bot.fees["BTC"] == 0.00005
+
+    asyncio.run(scenario())
+
+
 def test_testnet_grid_batches_multiple_fills_into_one_notification():
     async def scenario():
         client = FakeTestnetClient()

@@ -17,6 +17,24 @@ def test_paper_buy_and_sell_with_fees():
     assert portfolio.position("BTC").quantity == 0.0
     assert round(portfolio.quote_balance, 2) == 10097.90
     assert round(portfolio.fees_paid, 2) == 2.10
+    snapshot = portfolio.snapshot()
+    assert round(snapshot["gross_realized_pnl"], 2) == 98.90
+    assert round(snapshot["buy_fees_paid"], 2) == 1.00
+    assert round(snapshot["realized_pnl"], 2) == 97.90
+    assert round(snapshot["accounting_delta"], 10) == 0
+
+
+def test_portfolio_snapshot_reconciles_open_position_and_buy_fee():
+    portfolio = PaperPortfolio(starting_quote=10_000.0)
+    broker = PaperBroker(portfolio, fee_rate=0.001)
+
+    broker.market_buy("BTCUSDT", "BTC", price=50_000.0, quote_amount=1_000.0)
+    snapshot = portfolio.snapshot({"BTC": 49_000.0})
+
+    assert round(snapshot["realized_pnl"], 2) == -1.00
+    assert round(snapshot["unrealized_pnl"], 2) == -20.00
+    assert round(snapshot["total_equity"] - snapshot["starting_balance"], 2) == -21.00
+    assert round(snapshot["accounting_delta"], 10) == 0
 
 
 def test_smart_grid_plan():

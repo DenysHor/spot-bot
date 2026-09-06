@@ -299,14 +299,24 @@ class TestnetGridEngine:
                 current = await self.client.order(self.bot.symbol, order.order_id)
                 canceled = await self.client.cancel_order(self.bot.symbol, order.order_id)
                 order.status = "CANCELED"
-                executed = float(canceled.get("executedQty", current.get("executedQty", 0)))
-                quote = float(canceled.get("cummulativeQuoteQty", current.get("cummulativeQuoteQty", 0)))
+                final_order = {**current, **canceled}
+                executed = float(final_order.get("executedQty", 0))
+                quote = float(final_order.get("cummulativeQuoteQty", 0))
                 if executed > 0 and quote > 0:
-                    fill_price = quote / executed
+                    fill_price, net_quantity, quote_fee = await self._fill_details(
+                        self.bot, order, final_order,
+                    )
                     sell_price = self.client.floor_to_step(fill_price * (1 + self.bot.step_pct / 100), rules["tick_size"])
-                    qty = self.client.floor_to_step(executed, rules["step_size"])
+                    qty = self.client.floor_to_step(net_quantity, rules["step_size"])
+                    if float(qty) < float(rules["min_qty"]):
+                        raise ValueError("Частково виконана купівля нижча за мінімальну кількість для захисного продажу")
                     result = await self.client.create_limit_order(self.bot.symbol, "SELL", qty, sell_price)
-                    self.bot.orders.append(TestnetOrder(int(result["orderId"]), "SELL", float(sell_price), float(qty), source_price=fill_price, created_at=self.now()))
+                    self.bot.orders.append(TestnetOrder(
+                        int(result["orderId"]), "SELL", float(sell_price), float(qty),
+                        source_price=fill_price,
+                        source_cost=order.cumulative_quote + quote_fee,
+                        created_at=self.now(),
+                    ))
         self.bot.buy_enabled = False
         self.bot.soft_complete = soft_complete
         self.bot.status = "DRAINING" if soft_complete else "BUY_PAUSED"

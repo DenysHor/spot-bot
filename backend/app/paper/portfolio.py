@@ -98,16 +98,26 @@ class PaperPortfolio:
             })
 
         total_equity = self.quote_balance + assets_value
+        # SELL fees are already deducted from ``self.realized_pnl`` by the
+        # broker, while BUY fees are charged directly to the quote balance.
+        # Report a net realized figure so the dashboard accounting identity is
+        # exact: total result = net realized result + unrealized result.
+        buy_fees_paid = sum(trade.fee_quote for trade in self.trades if trade.side == "BUY")
+        net_realized_pnl = self.realized_pnl - buy_fees_paid
+        total_result = total_equity - self.starting_quote
         return {
             "quote_asset": self.quote_asset,
             "starting_balance": self.starting_quote,
             "quote_balance": self.quote_balance,
             "assets_value": assets_value,
             "total_equity": total_equity,
-            "realized_pnl": self.realized_pnl,
+            "realized_pnl": net_realized_pnl,
+            "gross_realized_pnl": self.realized_pnl,
+            "buy_fees_paid": buy_fees_paid,
             "unrealized_pnl": unrealized,
             "fees_paid": self.fees_paid,
-            "return_pct": ((total_equity - self.starting_quote) / self.starting_quote * 100) if self.starting_quote else 0.0,
+            "accounting_delta": total_result - net_realized_pnl - unrealized,
+            "return_pct": (total_result / self.starting_quote * 100) if self.starting_quote else 0.0,
             "positions": positions,
             "trade_count": len(self.trades),
         }

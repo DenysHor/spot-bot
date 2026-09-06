@@ -460,7 +460,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.58.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.59.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -600,7 +600,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.58.1",
+        "version": "0.59.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1526,7 +1526,10 @@ async def analytics_advisor() -> dict:
             "capital_utilization_pct": deployed / allocated * 100 if allocated else 0,
         },
         "bots": rows,
-        "caveat": "Виграшні цикли та зафіксована просадка не враховують збиток ще відкритих позицій.",
+        "caveat": (
+            "Загальний результат дорівнює чистому зафіксованому та ринковому результату відкритих позицій. "
+            "У картках значення «Якщо продати зараз» додатково враховує очікувану комісію продажу та облік окремих лотів."
+        ),
     }
 
 
