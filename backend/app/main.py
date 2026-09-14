@@ -460,7 +460,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.59.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.60.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -550,6 +550,11 @@ class TestnetGridStartRequest(BaseModel):
     levels: int = Field(default=4, ge=1, le=10)
 
 
+class TestnetRecoveryRequest(BaseModel):
+    expected_order_ids: list[int]
+    confirmed: bool = False
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -600,7 +605,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.59.0",
+        "version": "0.60.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -700,6 +705,28 @@ async def testnet_reconciliation() -> dict:
         return await testnet_engine.reconciliation()
     except (ValueError, BinanceTestnetError) as exc:
         raise HTTPException(status_code=502, detail=f"Перевірка TESTNET: {exc}") from exc
+
+
+@app.get("/api/testnet/recovery-preview")
+async def testnet_recovery_preview() -> dict:
+    require_testnet_mode()
+    if not testnet_engine.bot:
+        raise HTTPException(status_code=404, detail="TESTNET-бота немає")
+    try:
+        return await testnet_engine.recovery_preview()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=409, detail=f"Відновлення TESTNET: {exc}") from exc
+
+
+@app.post("/api/testnet/recover-after-reset")
+async def testnet_recover_after_reset(request: TestnetRecoveryRequest) -> dict:
+    require_testnet_mode()
+    if not request.confirmed:
+        raise HTTPException(status_code=400, detail="Потрібне явне підтвердження відновлення")
+    try:
+        return await testnet_engine.recover_after_reset(request.expected_order_ids)
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=409, detail=f"Відновлення TESTNET: {exc}") from exc
 
 
 @app.get("/api/testnet/market/{symbol}")

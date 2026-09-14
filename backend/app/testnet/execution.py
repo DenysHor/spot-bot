@@ -3,7 +3,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-from app.exchange.binance_testnet import BinanceTestnetClient
+from app.exchange.binance_testnet import BinanceTestnetClient, BinanceTestnetError
 
 
 @dataclass
@@ -119,7 +119,9 @@ class TestnetGridEngine:
         used_budget = buy_reserved + sell_reserved
         balances = {row["asset"]: row for row in account.get("balances", [])}
         quote_locked = float(balances.get(rules["quote_asset"], {}).get("locked", 0))
+        quote_free = float(balances.get(rules["quote_asset"], {}).get("free", 0))
         base_locked = float(balances.get(rules["base_asset"], {}).get("locked", 0))
+        base_free = float(balances.get(rules["base_asset"], {}).get("free", 0))
         expected_base = sum(max(0, order.quantity - order.executed_quantity) for order in tracked if order.side == "SELL")
         snapshot = bot.snapshot()
         issues = []
@@ -144,9 +146,76 @@ class TestnetGridEngine:
             "missing_order_ids": missing, "untracked_order_ids": untracked, "duplicate_order_groups": duplicates,
             "budget_quote": bot.budget_quote, "used_budget": used_budget,
             "quote_locked": quote_locked, "expected_quote_locked": buy_reserved,
-            "base_asset": rules["base_asset"], "base_locked": base_locked, "expected_base_locked": expected_base,
+            "quote_asset": rules["quote_asset"], "quote_free": quote_free,
+            "base_asset": rules["base_asset"], "base_free": base_free,
+            "base_locked": base_locked, "expected_base_locked": expected_base,
             "issues": issues, "virtual_funds": True,
         }
+
+    async def _recovery_preview_locked(self) -> dict:
+        audit = await self._reconciliation_snapshot()
+        tracked = [
+            order for order in self.bot.orders
+            if order.status in {"NEW", "PARTIALLY_FILLED"}
+        ]
+        missing_ids = set(audit["missing_order_ids"])
+        confirmed_missing = []
+        uncertain = []
+        for order in tracked:
+            if order.order_id not in missing_ids:
+                continue
+            try:
+                current = await self.client.order(self.bot.symbol, order.order_id)
+                uncertain.append({"order_id": order.order_id, "status": current.get("status", "UNKNOWN")})
+            except BinanceTestnetError as exc:
+                if "-2013" in str(exc) or "Order does not exist" in str(exc):
+                    confirmed_missing.append(order.order_id)
+                else:
+                    uncertain.append({"order_id": order.order_id, "error": str(exc)})
+        tracked_ids = {order.order_id for order in tracked}
+        safe = bool(tracked_ids) and set(confirmed_missing) == tracked_ids
+        safe = safe and audit["exchange_open_orders"] == 0 and not audit["untracked_order_ids"]
+        reason = (
+            "Binance підтвердив, що всі локальні активні заявки більше не існують."
+            if safe else
+            "Відновлення заблоковано: не всі заявки підтверджені як відсутні або на Binance є відкриті заявки."
+        )
+        return {
+            "recoverable": safe, "reason": reason,
+            "confirmed_missing_order_ids": sorted(confirmed_missing),
+            "uncertain_orders": uncertain,
+            "exchange_open_orders": audit["exchange_open_orders"],
+            "base_asset": audit["base_asset"], "base_free": audit["base_free"],
+            "quote_asset": audit["quote_asset"], "quote_free": audit["quote_free"],
+            "virtual_funds": True,
+        }
+
+    async def recovery_preview(self) -> dict:
+        """Confirm that a Testnet reset removed every locally tracked open order."""
+        async with self._sync_lock:
+            return await self._recovery_preview_locked()
+
+    async def recover_after_reset(self, expected_order_ids: list[int]) -> dict:
+        """Archive a verified stale Testnet bot without placing or cancelling orders."""
+        async with self._sync_lock:
+            preview = await self._recovery_preview_locked()
+            expected = sorted(set(expected_order_ids))
+            if not preview["recoverable"]:
+                raise ValueError(preview["reason"])
+            if expected != preview["confirmed_missing_order_ids"]:
+                raise ValueError("Стан змінився. Повторіть попередню перевірку відновлення")
+            recovered = set(expected)
+            for order in self.bot.orders:
+                if order.order_id in recovered and order.status in {"NEW", "PARTIALLY_FILLED"}:
+                    order.status = "RECONCILED_MISSING"
+            self.bot.status = "STOPPED"
+            self.bot.buy_enabled = False
+            self.bot.soft_complete = False
+            self.bot.last_sync_at = self.now()
+            self.bot.last_error = ""
+            await self._emit("TESTNET_RESET_RECOVERED", self.bot, notify=False)
+            self._save()
+            return {**preview, "recovered_order_ids": expected, "bot": self.bot.snapshot()}
 
     async def _notify(self, event: str, bot: TestnetBot, payload=None) -> None:
         if self.event_sink is not None:

@@ -1,6 +1,6 @@
 import asyncio
 
-from app.exchange.binance_testnet import BinanceTestnetClient
+from app.exchange.binance_testnet import BinanceTestnetClient, BinanceTestnetError
 from app.testnet.execution import TestnetGridEngine as GridEngine
 
 
@@ -11,6 +11,7 @@ class FakeTestnetClient:
         self.statuses = {}
         self.trade_rows = {}
         self.extra_open_orders = []
+        self.missing_order_ids = set()
 
     floor_to_step = staticmethod(BinanceTestnetClient.floor_to_step)
 
@@ -32,6 +33,8 @@ class FakeTestnetClient:
         return {"orderId": order_id}
 
     async def order(self, symbol, order_id):
+        if order_id in self.missing_order_ids:
+            raise BinanceTestnetError("Binance -2013: Order does not exist.")
         return {"orderId": order_id, **self.statuses[order_id]}
 
     async def cancel_order(self, symbol, order_id):
@@ -219,5 +222,43 @@ def test_testnet_reconciliation_detects_untracked_order_and_emergency_cancels_al
         assert stopped.buy_enabled is False
         assert all(order.status == "CANCELED" for order in bot.orders)
         assert await client.open_orders("BTCUSDT") == []
+
+    asyncio.run(scenario())
+
+
+def test_testnet_recovery_archives_only_fully_confirmed_reset_state():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        client.missing_order_ids = {order.order_id for order in bot.orders}
+        for order_id in client.missing_order_ids:
+            client.statuses[order_id]["status"] = "CANCELED"
+
+        preview = await engine.recovery_preview()
+        assert preview["recoverable"] is True
+        assert preview["confirmed_missing_order_ids"] == sorted(client.missing_order_ids)
+
+        result = await engine.recover_after_reset(preview["confirmed_missing_order_ids"])
+        assert result["recovered_order_ids"] == sorted(client.missing_order_ids)
+        assert bot.status == "STOPPED"
+        assert bot.buy_enabled is False
+        assert all(order.status == "RECONCILED_MISSING" for order in bot.orders)
+
+    asyncio.run(scenario())
+
+
+def test_testnet_recovery_fails_closed_when_exchange_still_has_an_order():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        missing = bot.orders[0]
+        client.missing_order_ids.add(missing.order_id)
+        client.statuses[missing.order_id]["status"] = "CANCELED"
+
+        preview = await engine.recovery_preview()
+        assert preview["recoverable"] is False
+        assert bot.status == "RUNNING"
 
     asyncio.run(scenario())
