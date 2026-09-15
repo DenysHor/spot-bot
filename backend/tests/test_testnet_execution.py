@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from app.exchange.binance_testnet import BinanceTestnetClient, BinanceTestnetError
 from app.testnet.execution import TestnetGridEngine as GridEngine
@@ -260,5 +261,27 @@ def test_testnet_recovery_fails_closed_when_exchange_still_has_an_order():
         preview = await engine.recovery_preview()
         assert preview["recoverable"] is False
         assert bot.status == "RUNNING"
+
+    asyncio.run(scenario())
+
+
+def test_testnet_history_and_live_readiness_are_reported():
+    async def scenario():
+        client = FakeTestnetClient()
+        engine = GridEngine(client)
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        assert len(bot.pnl_history) == 1
+
+        collecting = await engine.reconciliation()
+        assert collecting["live_readiness"]["status"] == "COLLECTING_DATA"
+        assert collecting["live_readiness"]["ready_for_live"] is False
+
+        bot.created_at = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+        bot.completed_cycles = 50
+        bot.realized_pnl = 10
+        ready = await engine.reconciliation()
+        assert ready["live_readiness"]["status"] == "READY_FOR_SMALL_PILOT"
+        assert ready["live_readiness"]["ready_for_live"] is True
+        assert ready["live_readiness"]["passed_criteria"] == 6
 
     asyncio.run(scenario())

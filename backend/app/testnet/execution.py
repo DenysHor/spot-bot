@@ -40,6 +40,7 @@ class TestnetBot:
     fees: dict[str, float] = field(default_factory=dict)
     events: list[dict] = field(default_factory=list)
     orders: list[TestnetOrder] = field(default_factory=list)
+    pnl_history: list[dict] = field(default_factory=list)
 
     def snapshot(self) -> dict:
         data = asdict(self)
@@ -94,6 +95,73 @@ class TestnetGridEngine:
         if self.store is not None:
             self.store.set_notification_state(self.STORE_KEY, json.dumps(asdict(self.bot)) if self.bot else "")
 
+    @staticmethod
+    def _fee_quote(bot: TestnetBot) -> float:
+        base_asset = bot.symbol.removesuffix("USDT")
+        return bot.fees.get("USDT", 0.0) + bot.fees.get(base_asset, 0.0) * bot.last_price
+
+    def _record_pnl(self, bot: TestnetBot) -> None:
+        snapshot = bot.snapshot()
+        point = {
+            "timestamp": self.now(), "realized_pnl": bot.realized_pnl,
+            "unrealized_pnl": snapshot["unrealized_pnl"], "total_pnl": snapshot["total_pnl"],
+            "fees_quote": self._fee_quote(bot),
+        }
+        if bot.pnl_history:
+            previous = datetime.fromisoformat(bot.pnl_history[-1]["timestamp"])
+            if (datetime.now(timezone.utc) - previous).total_seconds() < 300:
+                bot.pnl_history[-1] = point
+            else:
+                bot.pnl_history.append(point)
+        else:
+            bot.pnl_history.append(point)
+        bot.pnl_history = bot.pnl_history[-500:]
+
+    def _live_readiness(self, audit_status: str) -> dict:
+        bot = self.bot
+        snapshot = bot.snapshot()
+        now = datetime.now(timezone.utc)
+        elapsed_days = max(0.0, (now - datetime.fromisoformat(bot.created_at)).total_seconds() / 86400)
+        error_times = [
+            datetime.fromisoformat(row["timestamp"]) for row in bot.events
+            if row.get("event") == "SYNC_ERROR" and row.get("timestamp")
+        ]
+        safe_since = max(error_times, default=datetime.fromisoformat(bot.created_at))
+        safe_days = max(0.0, (now - safe_since).total_seconds() / 86400) if audit_status == "SAFE" else 0.0
+        totals = [float(row.get("total_pnl", 0)) for row in bot.pnl_history] or [snapshot["total_pnl"]]
+        peak = 0.0
+        max_drawdown_quote = 0.0
+        for value in totals:
+            peak = max(peak, value)
+            max_drawdown_quote = max(max_drawdown_quote, peak - value)
+        max_drawdown_pct = max_drawdown_quote / bot.budget_quote * 100 if bot.budget_quote else 0.0
+        fees_quote = self._fee_quote(bot)
+        gross_before_fees = max(0.0, bot.realized_pnl + fees_quote)
+        fee_drag_pct = fees_quote / gross_before_fees * 100 if gross_before_fees else 0.0
+        criteria = [
+            {"code": "DAYS", "label": "Тестування", "value": elapsed_days, "target": "≥ 14 днів", "passed": elapsed_days >= 14},
+            {"code": "CYCLES", "label": "Завершені цикли", "value": bot.completed_cycles, "target": "≥ 50", "passed": bot.completed_cycles >= 50},
+            {"code": "NET_RESULT", "label": "Результат", "value": snapshot["total_pnl"], "target": "> 0 USDT", "passed": snapshot["total_pnl"] > 0},
+            {"code": "DRAWDOWN", "label": "Макс. просадка", "value": max_drawdown_pct, "target": "≤ 5%", "passed": max_drawdown_pct <= 5},
+            {"code": "FEES", "label": "Вплив комісій", "value": fee_drag_pct, "target": "≤ 30%", "passed": fee_drag_pct <= 30},
+            {"code": "SYNC", "label": "Без помилок", "value": safe_days, "target": "≥ 7 днів", "passed": safe_days >= 7 and audit_status == "SAFE"},
+        ]
+        passed = sum(1 for row in criteria if row["passed"])
+        enough_data = elapsed_days >= 14 and bot.completed_cycles >= 50
+        ready = enough_data and passed == len(criteria)
+        status = "READY_FOR_SMALL_PILOT" if ready else "NOT_READY" if enough_data else "COLLECTING_DATA"
+        return {
+            "status": status, "ready_for_live": ready, "passed_criteria": passed,
+            "total_criteria": len(criteria), "progress_pct": passed / len(criteria) * 100,
+            "elapsed_days": elapsed_days, "safe_days": safe_days,
+            "max_drawdown_pct": max_drawdown_pct, "fee_drag_pct": fee_drag_pct,
+            "criteria": criteria,
+            "recommendation": (
+                "Критерії малого LIVE-пілота виконані; LIVE залишається програмно вимкненим."
+                if ready else "Продовжуйте TESTNET-збір. LIVE-торгівля залишається вимкненою."
+            ),
+        }
+
     async def balances(self) -> list[dict]:
         account = await self.client.account()
         return [row for row in account.get("balances", []) if float(row["free"]) or float(row["locked"])]
@@ -140,7 +208,7 @@ class TestnetGridEngine:
         if snapshot["sync_stale"]:
             issues.append({"severity": "WARNING", "message": "Синхронізація не оновлювалася понад хвилину"})
         status = "CRITICAL" if any(row["severity"] == "CRITICAL" for row in issues) else "WARNING" if issues else "SAFE"
-        return {
+        result = {
             "status": status, "checked_at": self.now(), "symbol": bot.symbol,
             "tracked_open_orders": len(tracked_ids), "exchange_open_orders": len(exchange_ids),
             "missing_order_ids": missing, "untracked_order_ids": untracked, "duplicate_order_groups": duplicates,
@@ -151,6 +219,8 @@ class TestnetGridEngine:
             "base_locked": base_locked, "expected_base_locked": expected_base,
             "issues": issues, "virtual_funds": True,
         }
+        result["live_readiness"] = self._live_readiness(status)
+        return result
 
     async def _recovery_preview_locked(self) -> dict:
         audit = await self._reconciliation_snapshot()
@@ -266,6 +336,7 @@ class TestnetGridEngine:
                     pass
             raise
         self.bot = bot
+        self._record_pnl(bot)
         await self._emit("BOT_STARTED", bot)
         self._save()
         return bot
@@ -336,6 +407,7 @@ class TestnetGridEngine:
             if bot.soft_complete and not any(x.side == "SELL" and x.status in {"NEW", "PARTIALLY_FILLED"} for x in bot.orders):
                 bot.status = "STOPPED"
             bot.last_sync_at, bot.last_error = self.now(), ""
+            self._record_pnl(bot)
         except Exception as exc:
             message = str(exc)
             changed = message != bot.last_error
