@@ -270,7 +270,9 @@ def test_testnet_history_and_live_readiness_are_reported():
         client = FakeTestnetClient()
         engine = GridEngine(client)
         bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
-        assert len(bot.pnl_history) == 1
+        assert len(bot.pnl_history) == 2
+        assert bot.pnl_history[0]["timestamp"] == bot.created_at
+        assert bot.pnl_history[0]["total_pnl"] == 0
 
         collecting = await engine.reconciliation()
         assert collecting["live_readiness"]["status"] == "COLLECTING_DATA"

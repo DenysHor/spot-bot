@@ -102,6 +102,17 @@ class TestnetGridEngine:
 
     def _record_pnl(self, bot: TestnetBot) -> None:
         snapshot = bot.snapshot()
+        baseline = {
+            "timestamp": bot.created_at,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "total_pnl": 0.0,
+            "fees_quote": 0.0,
+        }
+        if not bot.pnl_history:
+            bot.pnl_history.append(baseline)
+        elif len(bot.pnl_history) == 1 and bot.pnl_history[0].get("timestamp") != bot.created_at:
+            bot.pnl_history.insert(0, baseline)
         point = {
             "timestamp": self.now(), "realized_pnl": bot.realized_pnl,
             "unrealized_pnl": snapshot["unrealized_pnl"], "total_pnl": snapshot["total_pnl"],
@@ -109,12 +120,11 @@ class TestnetGridEngine:
         }
         if bot.pnl_history:
             previous = datetime.fromisoformat(bot.pnl_history[-1]["timestamp"])
-            if (datetime.now(timezone.utc) - previous).total_seconds() < 300:
+            same_as_baseline = len(bot.pnl_history) == 1 and previous == datetime.fromisoformat(bot.created_at)
+            if (datetime.now(timezone.utc) - previous).total_seconds() < 300 and not same_as_baseline:
                 bot.pnl_history[-1] = point
             else:
                 bot.pnl_history.append(point)
-        else:
-            bot.pnl_history.append(point)
         bot.pnl_history = bot.pnl_history[-500:]
 
     def _live_readiness(self, audit_status: str) -> dict:
