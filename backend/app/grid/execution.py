@@ -271,18 +271,20 @@ class GridExecutionEngine:
         self._persist(bot)
         return bot
 
-    def set_manual_buy_pause(self, bot_id: str, paused: bool) -> GridBotState:
+    def set_manual_buy_pause(self, bot_id: str, paused: bool, source: str = "USER") -> GridBotState:
         bot = self.get_bot(bot_id)
         if bot.status != "RUNNING" or bot.drain_mode:
             raise ValueError("Buy control is available only for a running Grid bot")
         if bot.manual_buy_paused == paused:
             return bot
         bot.manual_buy_paused = paused
+        guard_pause = paused and source == "MARKET_GUARD"
         bot.events.append(GridEvent(
             timestamp=self._now(),
-            event="MANUAL_BUYS_DISABLED" if paused else "MANUAL_BUYS_ENABLED",
+            event="MARKET_GUARD_PAUSED" if guard_pause else "MANUAL_BUYS_DISABLED" if paused else "MANUAL_BUYS_ENABLED",
             price=bot.last_price,
-            message=("New BUY fills disabled by user; SELL remains active"
+            message=("Критичне падіння: нові покупки автоматично вимкнено; продажі активні"
+                     if guard_pause else "New BUY fills disabled by user; SELL remains active"
                      if paused else "New BUY fills enabled by user"),
         ))
         self._persist(bot)

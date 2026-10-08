@@ -13,6 +13,7 @@ IMPORTANT_EVENTS = {
     "PRICE_RANGE_EXITED", "PRICE_RANGE_REENTERED",
     "DRAIN_MODE_STARTED", "DRAIN_MODE_COMPLETED",
     "MANUAL_BUYS_DISABLED", "MANUAL_BUYS_ENABLED",
+    "MARKET_GUARD_PAUSED",
     "SIGNAL_BUY_FILLED", "SIGNAL_SELL_FILLED",
 }
 
@@ -26,6 +27,7 @@ EVENT_LABELS = {
     "PRICE_RANGE_EXITED": "⚠️ Ціна вийшла з коридору", "PRICE_RANGE_REENTERED": "✅ Ціна повернулася в коридор",
     "DRAIN_MODE_STARTED": "⏳ Почато м’яке завершення", "DRAIN_MODE_COMPLETED": "✅ М’яке завершення виконано",
     "MANUAL_BUYS_DISABLED": "⏸ Покупки вимкнено", "MANUAL_BUYS_ENABLED": "▶️ Покупки увімкнено",
+    "MARKET_GUARD_PAUSED": "🛡 Антипадіння зупинило нові покупки",
     "SIGNAL_BUY_FILLED": "🟢 Сигнальна купівля виконана", "SIGNAL_SELL_FILLED": "🔴 Сигнальну позицію закрито",
 }
 
@@ -73,6 +75,8 @@ class TelegramNotifier:
         self.weekly_report_provider = None
         self.health_alert_provider = None
         self.daily_advisor_provider = None
+        self.command_handler = None
+        self.update_fetcher = self._fetch_updates
         self.status = NotificationStatus(enabled=self.enabled)
         self._seen: dict[str, int] = {}
         self._task: asyncio.Task | None = None
@@ -142,6 +146,41 @@ class TelegramNotifier:
             response = await client.post(url, json={"chat_id": self.chat_id, "text": text})
             response.raise_for_status()
 
+    async def _fetch_updates(self, offset: int) -> list[dict]:
+        url = f"https://api.telegram.org/bot{self.token}/getUpdates"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params={"offset": offset, "limit": 20, "timeout": 0})
+            response.raise_for_status()
+            return response.json().get("result", [])
+
+    async def scan_commands(self) -> None:
+        if self.command_handler is None:
+            return
+        saved_offset = self._state("telegram_update_offset")
+        offset = int(saved_offset or "0")
+        updates = await self.update_fetcher(offset)
+        if not saved_offset:
+            if updates:
+                self._save_state("telegram_update_offset", str(max(
+                    int(update.get("update_id", 0)) for update in updates
+                ) + 1))
+            else:
+                self._save_state("telegram_update_offset", "1")
+            return
+        for update in updates:
+            update_id = int(update.get("update_id", 0))
+            offset = max(offset, update_id + 1)
+            self._save_state("telegram_update_offset", str(offset))
+            message = update.get("message") or {}
+            if str((message.get("chat") or {}).get("id", "")) != str(self.chat_id):
+                continue
+            text = str(message.get("text", "")).strip()
+            if not text.startswith("/"):
+                continue
+            response = await self.command_handler(text)
+            if response:
+                await self.send("TELEGRAM_COMMAND", response)
+
     async def send(self, kind: str, text: str) -> None:
         try:
             await self.sender(text)
@@ -163,6 +202,7 @@ class TelegramNotifier:
     async def scan_once(self, now: datetime | None = None) -> None:
         if not self.enabled:
             return
+        await self.scan_commands()
         for strategy, bots in self._sources():
             for bot in bots.values():
                 key = f"event_cursor:{strategy}:{bot.id}"

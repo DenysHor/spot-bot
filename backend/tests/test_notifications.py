@@ -160,6 +160,43 @@ def test_daily_report_includes_advisor_recommendations_and_requires_confirmation
     assert "Нічого не виконується автоматично" in sent[0]
 
 
+def test_telegram_commands_ignore_history_and_other_chats():
+    sent, handled = [], []
+
+    async def sender(text):
+        sent.append(text)
+
+    async def handler(text):
+        handled.append(text)
+        return f"OK {text}"
+
+    batches = [
+        [{"update_id": 5, "message": {"chat": {"id": "chat"}, "text": "/old"}}],
+        [
+            {"update_id": 6, "message": {"chat": {"id": "other"}, "text": "/status"}},
+            {"update_id": 7, "message": {"chat": {"id": "chat"}, "text": "/status"}},
+        ],
+    ]
+
+    async def updates(offset):
+        return batches.pop(0)
+
+    store = FakeStore()
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={}), SimpleNamespace(bots={}),
+        store=store, sender=sender,
+    )
+    notifier.command_handler = handler
+    notifier.update_fetcher = updates
+
+    asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
+    asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 12, tzinfo=timezone.utc)))
+
+    assert handled == ["/status"]
+    assert sent == ["OK /status"]
+    assert store.state["telegram_update_offset"] == "8"
+
+
 def test_weekly_evaluation_is_sent_once_per_week():
     sent = []
 

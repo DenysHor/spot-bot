@@ -421,12 +421,75 @@ async def notify_testnet_event(event: str, bot, order) -> None:
 
 testnet_engine.event_sink = notify_testnet_event
 market_scanner_task: asyncio.Task | None = None
+market_guard_last_run = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def market_guard_assessment(bot, analysis: dict) -> dict:
+    state = bot.snapshot()
+    deployed = state["grid_open_exposure_quote"] + state["seed_value_quote"]
+    deployed_pct = deployed / bot.budget_quote * 100 if bot.budget_quote else 0.0
+    unrealized_pct = state["unrealized_pnl"] / bot.budget_quote * 100 if bot.budget_quote else 0.0
+    points, reasons = 0, []
+    if analysis["regime"]["name"] == "DOWNTREND":
+        points += 2
+        reasons.append("ціна та EMA підтверджують спадний тренд")
+    if analysis["rsi14"] < 32:
+        points += 1
+        reasons.append(f"RSI {analysis['rsi14']:.1f}")
+    if analysis["change_24h_pct"] <= -3:
+        points += 1
+        reasons.append(f"24г {analysis['change_24h_pct']:+.2f}%")
+    if analysis["atr_pct"] >= 4:
+        points += 1
+        reasons.append(f"ATR {analysis['atr_pct']:.2f}%")
+    if deployed_pct >= 80:
+        points += 1
+        reasons.append(f"залучено {deployed_pct:.0f}% бюджету")
+    if unrealized_pct <= -5:
+        points += 1
+        reasons.append(f"відкрита просадка {unrealized_pct:.2f}%")
+    return {
+        "critical": analysis["regime"]["name"] == "DOWNTREND" and points >= 4,
+        "points": points, "reasons": reasons,
+    }
+
+
+async def market_guard_once() -> None:
+    active = [
+        bot for bot in grid_engine.bots.values()
+        if bot.status == "RUNNING" and not bot.drain_mode and not bot.manual_buy_paused
+    ]
+    results = await asyncio.gather(*(
+        signal_analysis(bot.symbol, bot.base_asset) for bot in active
+    ), return_exceptions=True)
+    for bot, analysis in zip(active, results):
+        if isinstance(analysis, Exception):
+            logger.warning("Market guard skipped %s: %s", bot.symbol, describe_exception(analysis))
+            continue
+        assessment = market_guard_assessment(bot, analysis)
+        if not assessment["critical"]:
+            continue
+        grid_engine.set_manual_buy_pause(bot.id, True, source="MARKET_GUARD")
+        store.set_notification_state(f"market_guard:{bot.id}", "PAUSED")
+        if notifier.enabled:
+            reasons = "; ".join(assessment["reasons"])
+            await notifier.send(
+                "MARKET_GUARD_ACTION",
+                f"🛡 {bot.symbol} · Антипадіння\nНові покупки автоматично вимкнено.\n"
+                f"Причини: {reasons}.\nПродажі відкритих позицій залишаються активними.\n"
+                f"Для повторної перевірки: /resume_buys {bot.symbol}",
+            )
 
 
 async def market_scanner_forever() -> None:
+    global market_guard_last_run
     while True:
         try:
             await scan_top_quote_pairs()
+            now = datetime.now(timezone.utc)
+            if now - market_guard_last_run >= timedelta(minutes=15):
+                await market_guard_once()
+                market_guard_last_run = now
         except Exception as exc:
             logger.warning("Background market scanner failed: %s", describe_exception(exc))
         await asyncio.sleep(60)
@@ -1586,6 +1649,54 @@ async def telegram_daily_advisor() -> str:
 
 
 notifier.daily_advisor_provider = telegram_daily_advisor
+
+
+def _telegram_grid_bot(symbol: str):
+    normalized = symbol.upper().strip()
+    return next((
+        bot for bot in grid_engine.bots.values()
+        if bot.symbol == normalized and bot.status != "STOPPED"
+    ), None)
+
+
+async def telegram_command(text: str) -> str:
+    parts = text.strip().split()
+    command = parts[0].split("@", 1)[0].lower()
+    if command == "/help":
+        return "\n".join([
+            "🤖 Команди Spot Grid Lab",
+            "/status — стан PAPER-портфеля",
+            "/recommendations — актуальні рекомендації",
+            "/pause_buys ПАРА — вимкнути нові покупки",
+            "/resume_buys ПАРА — перевірити ринок і дозволити покупки",
+            "Продаж зі збитком і LIVE-операції через Telegram недоступні.",
+        ])
+    if command == "/status":
+        return notifier.daily_report()
+    if command == "/recommendations":
+        return await telegram_daily_advisor()
+    if command not in {"/pause_buys", "/resume_buys"}:
+        return "Невідома команда. Надішліть /help."
+    if len(parts) != 2:
+        return f"Формат: {command} ПАРА, наприклад {command} SOLUSDT"
+    symbol = parts[1].upper()
+    bot = _telegram_grid_bot(symbol)
+    if bot is None:
+        return f"Активний PAPER Grid-бот {symbol} не знайдено."
+    if command == "/pause_buys":
+        grid_engine.set_manual_buy_pause(bot.id, True)
+        return f"⏸ {symbol}: нові покупки вимкнено, продажі залишаються активними."
+    analysis = await signal_analysis(bot.symbol, bot.base_asset)
+    assessment = market_guard_assessment(bot, analysis)
+    if assessment["critical"] or analysis["regime"]["name"] == "DOWNTREND":
+        reasons = "; ".join(assessment["reasons"] or analysis["regime"]["reasons"])
+        return f"⚠️ {symbol}: покупки не відновлено — спад ще не завершився. {reasons}."
+    grid_engine.set_manual_buy_pause(bot.id, False)
+    store.set_notification_state(f"market_guard:{bot.id}", "")
+    return f"▶️ {symbol}: перевірка пройдена, нові PAPER-покупки увімкнено."
+
+
+notifier.command_handler = telegram_command
 
 
 @app.get("/api/monitoring/status")
