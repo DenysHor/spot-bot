@@ -72,6 +72,7 @@ class TelegramNotifier:
         self.sender = sender or self._send_telegram
         self.weekly_report_provider = None
         self.health_alert_provider = None
+        self.daily_advisor_provider = None
         self.status = NotificationStatus(enabled=self.enabled)
         self._seen: dict[str, int] = {}
         self._task: asyncio.Task | None = None
@@ -180,7 +181,12 @@ class TelegramNotifier:
                     await self.send("BOT_HEALTH_ALERT", alert["message"])
                     self._save_state(state_key, report_date)
         if current.hour >= self.daily_report_hour_utc and self._state("daily_report_date") != report_date:
-            await self.send("DAILY_REPORT", self.daily_report())
+            report = self.daily_report()
+            if self.daily_advisor_provider is not None:
+                advice = await self.daily_advisor_provider()
+                if advice:
+                    report = f"{report}\n\n{advice}"
+            await self.send("DAILY_REPORT", report)
             self._save_state("daily_report_date", report_date)
         week = current.isocalendar()
         week_key = f"{week.year}-W{week.week:02d}"

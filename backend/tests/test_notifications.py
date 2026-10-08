@@ -132,6 +132,34 @@ def test_cursors_and_daily_report_survive_restart():
     assert len(store.log) == 2
 
 
+def test_daily_report_includes_advisor_recommendations_and_requires_confirmation():
+    sent = []
+
+    async def sender(text):
+        sent.append(text)
+
+    async def advisor():
+        return (
+            "🧭 Рекомендації аналітичного помічника\n"
+            "• DASHUSDT: зупинити нові покупки\n\n"
+            "Нічого не виконується автоматично."
+        )
+
+    store = FakeStore()
+    notifier = TelegramNotifier(
+        "token", "chat", SimpleNamespace(bots={}), SimpleNamespace(bots={}),
+        store=store, sender=sender,
+    )
+    notifier.daily_advisor_provider = advisor
+
+    asyncio.run(notifier.scan_once(datetime(2026, 1, 1, 21, tzinfo=timezone.utc)))
+
+    assert len(sent) == 1
+    assert "Щоденний PAPER-звіт" in sent[0]
+    assert "DASHUSDT: зупинити нові покупки" in sent[0]
+    assert "Нічого не виконується автоматично" in sent[0]
+
+
 def test_weekly_evaluation_is_sent_once_per_week():
     sent = []
 

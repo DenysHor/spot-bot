@@ -1296,8 +1296,6 @@ async def grid_soft_complete(bot_id: str) -> dict:
 
 @app.post("/api/grid/bots/{bot_id}/buy-control")
 async def grid_buy_control(bot_id: str, request: GridTrailingRequest) -> dict:
-    if settings.trading_mode != "PAPER":
-        raise HTTPException(status_code=409, detail="Buy control is PAPER-only")
     try:
         return grid_engine.set_manual_buy_pause(bot_id, not request.enabled).snapshot()
     except ValueError as exc:
@@ -1558,6 +1556,36 @@ async def analytics_advisor() -> dict:
             "У картках значення «Якщо продати зараз» додатково враховує очікувану комісію продажу та облік окремих лотів."
         ),
     }
+
+
+async def telegram_daily_advisor() -> str:
+    data = await analytics_advisor()
+    lines = ["🧭 Рекомендації аналітичного помічника"]
+    actionable = 0
+    for row in data["bots"]:
+        actions = [
+            action["label"] for action in row["actions"]
+            if action["code"] not in {"OPEN", "LIQUIDATE"}
+        ]
+        if not actions and row["severity"] not in {"DANGER", "WARNING"}:
+            continue
+        actionable += 1
+        lines.append(f"• {row['symbol']}: {row['recommendation']}")
+        if actions:
+            lines.append(f"  Пропозиція: {', '.join(actions)}")
+        elif row["severity"] == "DANGER":
+            lines.append("  Пропозиція: спостерігати; продаж зі збитком лише за окремим рішенням")
+    if not actionable:
+        lines.append("Термінових змін не рекомендовано.")
+    lines.extend([
+        "",
+        "Нічого не виконується автоматично.",
+        "Напишіть у чаті: «виконай рекомендацію для ПАРА» або «не виконувати».",
+    ])
+    return "\n".join(lines)
+
+
+notifier.daily_advisor_provider = telegram_daily_advisor
 
 
 @app.get("/api/monitoring/status")
