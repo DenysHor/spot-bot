@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -523,7 +524,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.62.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.63.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -668,7 +669,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.62.0",
+        "version": "0.63.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1651,6 +1652,53 @@ async def telegram_daily_advisor() -> str:
 notifier.daily_advisor_provider = telegram_daily_advisor
 
 
+telegram_pending_actions: dict[str, dict] = {}
+TELEGRAM_CONFIRMATION_TTL = timedelta(minutes=10)
+
+
+def _telegram_confirmation(kind: str, payload: dict) -> str:
+    token = secrets.token_hex(4).upper()
+    telegram_pending_actions.clear()
+    telegram_pending_actions[token] = {
+        "kind": kind, "payload": payload,
+        "expires_at": datetime.now(timezone.utc) + TELEGRAM_CONFIRMATION_TTL,
+    }
+    return token
+
+
+def _testnet_audit_message(audit: dict) -> str:
+    issues = audit.get("issues") or []
+    lines = [
+        f"🔄 TESTNET синхронізовано: {audit['status']}",
+        f"Заявки: локально {audit['tracked_open_orders']} / Binance {audit['exchange_open_orders']}",
+    ]
+    if issues:
+        lines.extend(f"• {row['message']}" for row in issues)
+    else:
+        lines.append("Розбіжностей не виявлено.")
+    return "\n".join(lines)
+
+
+async def _telegram_recommendation_plan() -> tuple[list[dict], list[str]]:
+    data = await analytics_advisor()
+    plan, notes = [], []
+    for row in data["bots"]:
+        codes = {action["code"] for action in row["actions"]}
+        action = None
+        if "SOFT_COMPLETE" in codes:
+            action = "SOFT_COMPLETE"
+        elif "STOP_BUYS" in codes:
+            action = "STOP_BUYS"
+        if action:
+            plan.append({
+                "bot_id": row["bot_id"], "symbol": row["symbol"],
+                "action": action, "recommendation": row["recommendation"],
+            })
+        elif "PAUSE" in codes:
+            notes.append(f"{row['symbol']}: паузу не включено до масового плану, щоб не зупинити продажі")
+    return plan, notes
+
+
 def _telegram_grid_bot(symbol: str):
     normalized = symbol.upper().strip()
     return next((
@@ -1667,14 +1715,93 @@ async def telegram_command(text: str) -> str:
             "🤖 Команди Spot Grid Lab",
             "/status — стан PAPER-портфеля",
             "/recommendations — актуальні рекомендації",
+            "/apply_recommendations — план безпечних масових дій",
             "/pause_buys ПАРА — вимкнути нові покупки",
             "/resume_buys ПАРА — перевірити ринок і дозволити покупки",
+            "/sync_testnet — синхронізувати і перевірити Binance Testnet",
+            "/repair_testnet — безпечний план відновлення після reset",
+            "/confirm КОД — підтвердити показаний план (чинний 10 хв)",
+            "/cancel — скасувати очікуване підтвердження",
             "Продаж зі збитком і LIVE-операції через Telegram недоступні.",
         ])
     if command == "/status":
         return notifier.daily_report()
     if command == "/recommendations":
         return await telegram_daily_advisor()
+    if command == "/cancel":
+        telegram_pending_actions.clear()
+        return "✅ Очікувану дію скасовано."
+    if command == "/sync_testnet":
+        if settings.trading_mode != "TESTNET" or not testnet_engine.bot:
+            return "TESTNET-бот не активний або середовище не в режимі TESTNET."
+        try:
+            return _testnet_audit_message(await testnet_engine.reconciliation())
+        except Exception as exc:
+            return f"❌ TESTNET-синхронізація не вдалася: {describe_exception(exc)}"
+    if command == "/repair_testnet":
+        if settings.trading_mode != "TESTNET" or not testnet_engine.bot:
+            return "TESTNET-бот не активний або середовище не в режимі TESTNET."
+        try:
+            preview = await testnet_engine.recovery_preview()
+        except Exception as exc:
+            return f"❌ Перевірка відновлення не вдалася: {describe_exception(exc)}"
+        if not preview["recoverable"]:
+            return f"⛔ Автоматичне відновлення заблоковано. {preview['reason']}"
+        ids = preview["confirmed_missing_order_ids"]
+        token = _telegram_confirmation("TESTNET_RECOVERY", {"order_ids": ids})
+        return (
+            f"⚠️ Binance підтвердив відсутність {len(ids)} локальних заявок. "
+            f"Бота буде безпечно архівовано без нових заявок.\n"
+            f"Для виконання: /confirm {token}"
+        )
+    if command == "/apply_recommendations":
+        plan, notes = await _telegram_recommendation_plan()
+        if not plan:
+            return "✅ Безпечних масових дій зараз немає. Нічого не змінено."
+        token = _telegram_confirmation("PAPER_RECOMMENDATIONS", {"plan": plan})
+        labels = {"STOP_BUYS": "вимкнути нові покупки", "SOFT_COMPLETE": "м’яко завершити"}
+        lines = ["📋 План виконання:"]
+        lines.extend(f"• {row['symbol']}: {labels[row['action']]}" for row in plan)
+        lines.extend(f"• Примітка: {note}" for note in notes)
+        lines.extend([
+            "Продажу за ринком, LIVE-дії та відновлення покупок не включено.",
+            f"Для виконання протягом 10 хв: /confirm {token}",
+            "Скасувати: /cancel",
+        ])
+        return "\n".join(lines)
+    if command == "/confirm":
+        if len(parts) != 2:
+            return "Формат: /confirm КОД"
+        pending = telegram_pending_actions.pop(parts[1].upper(), None)
+        if not pending or pending["expires_at"] < datetime.now(timezone.utc):
+            return "Код недійсний або строк його дії минув. Створіть новий план."
+        if pending["kind"] == "TESTNET_RECOVERY":
+            try:
+                result = await testnet_engine.recover_after_reset(pending["payload"]["order_ids"])
+            except Exception as exc:
+                return f"❌ Стан Binance змінився, відновлення не виконано: {describe_exception(exc)}"
+            return f"✅ TESTNET-відновлення завершено. Архівовано заявок: {len(result['recovered_order_ids'])}."
+        fresh_plan, _ = await _telegram_recommendation_plan()
+        fresh_actions = {(row["bot_id"], row["action"]) for row in fresh_plan}
+        completed, skipped = [], []
+        for item in pending["payload"]["plan"]:
+            bot = grid_engine.bots.get(item["bot_id"])
+            if (
+                not bot or bot.status != "RUNNING"
+                or (item["bot_id"], item["action"]) not in fresh_actions
+            ):
+                skipped.append(f"{item['symbol']} (стан або рекомендація змінилися)")
+                continue
+            if item["action"] == "SOFT_COMPLETE":
+                grid_engine.start_draining(bot.id)
+                completed.append(f"{bot.symbol}: м’яке завершення")
+            elif item["action"] == "STOP_BUYS":
+                grid_engine.set_manual_buy_pause(bot.id, True, source="TELEGRAM_RECOMMENDATION")
+                completed.append(f"{bot.symbol}: покупки вимкнено")
+        lines = ["✅ План виконано."] + [f"• {row}" for row in completed]
+        if skipped:
+            lines += ["Пропущено:"] + [f"• {row}" for row in skipped]
+        return "\n".join(lines)
     if command not in {"/pause_buys", "/resume_buys"}:
         return "Невідома команда. Надішліть /help."
     if len(parts) != 2:

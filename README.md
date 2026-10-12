@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.58.1**. The Testnet bot card renders immediately from persisted bot state, while the slower Binance balance and safety reconciliation load independently. Safety checks remain cached for one minute or refresh manually; LIVE execution remains disabled.
+> Current development version: **0.63.0**. Telegram supports confirmed PAPER recommendation plans and guarded Binance Testnet synchronization/recovery. LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.
@@ -309,6 +309,16 @@ pytest -q
 1. Telegram notifications
 2. Binance Spot Testnet execution
 3. Live execution only after validation
+
+## Telegram commands
+
+- `/status` and `/recommendations` show the current PAPER state and advice.
+- `/apply_recommendations` creates a preview of safe bulk actions; `/confirm CODE` is required within 10 minutes and `/cancel` discards it.
+- `/pause_buys SYMBOL` and `/resume_buys SYMBOL` control PAPER buys. Resume is blocked while the market guard still detects a downtrend.
+- `/sync_testnet` synchronizes the active Binance Testnet bot and reports reconciliation issues.
+- `/repair_testnet` only offers a confirmation code when Binance proves that all locally tracked open orders disappeared after a Testnet reset.
+
+Bulk recommendations never liquidate at market, resume buys, pause sell processing, or perform LIVE operations.
 
 ## Safety
 
