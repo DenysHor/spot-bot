@@ -45,9 +45,11 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.70.1" in page.text
-    assert "/static/advisor.css?v=0.70.1" in page.text
-    assert "/static/app.js?v=0.70.1" in page.text
+    assert "/static/styles.css?v=0.71.0" in page.text
+    assert "/static/advisor.css?v=0.71.0" in page.text
+    assert "/static/app.js?v=0.71.0" in page.text
+    assert 'id="risk-status"' in page.text
+    assert 'id="decision-journal"' in page.text
     assert "TESTNET-бот уже працює" in script.text
     assert "Ціна Testnet" in script.text
     assert "Найближча купівля" in script.text

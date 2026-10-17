@@ -463,12 +463,22 @@ class GridExecutionEngine:
         prices = {bot.base_asset: current_price}
         snapshot = portfolio.snapshot(prices)
         equity = snapshot["total_equity"]
+        today = datetime.now(timezone.utc).date()
+        daily_realized = sum(
+            trade.realized_pnl - trade.fee_quote
+            for trade in portfolio.trades
+            if datetime.fromisoformat(trade.timestamp.replace("Z", "+00:00")).date() == today
+        )
+        active_positions = sum(position.quantity > 0 for position in portfolio.positions.values())
         return self.risk_manager.check_buy(
             total_equity=equity,
             free_quote=portfolio.quote_balance,
             current_bot_allocation=snapshot["assets_value"],
             current_position_value=position.quantity * current_price,
             requested_quote=requested_quote * (1 + self.broker.fee_rate),
+            daily_realized_pnl=daily_realized,
+            active_positions=active_positions,
+            opens_new_position=position.quantity <= 0,
         )
 
     def _available_quote_for_bot(self, bot: GridBotState, current_price: float) -> float:

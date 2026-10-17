@@ -188,11 +188,22 @@ class DcaExecutionEngine:
 
         portfolio = self.broker.portfolio
         snapshot = portfolio.snapshot({bot.base_asset: current})
-        position_value = portfolio.position(bot.base_asset).quantity * current
+        position = portfolio.position(bot.base_asset)
+        position_value = position.quantity * current
+        today = current_time.date()
+        daily_realized = sum(
+            trade.realized_pnl - trade.fee_quote
+            for trade in portfolio.trades
+            if datetime.fromisoformat(trade.timestamp.replace("Z", "+00:00")).date() == today
+        )
+        active_positions = sum(item.quantity > 0 for item in portfolio.positions.values())
         decision = self.risk_manager.check_buy(
             total_equity=snapshot["total_equity"], free_quote=portfolio.quote_balance,
             current_bot_allocation=snapshot["assets_value"], current_position_value=position_value,
             requested_quote=total_cost,
+            daily_realized_pnl=daily_realized,
+            active_positions=active_positions,
+            opens_new_position=position.quantity <= 0,
         )
         if not decision.allowed:
             bot.events.append(DcaEvent(

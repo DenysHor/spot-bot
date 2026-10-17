@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     max_portfolio_allocation_pct: float = 50.0
     max_position_pct: float = 10.0
     reserve_usdt_pct: float = 20.0
+    max_daily_loss_pct: float = 2.0
+    max_open_positions: int = 8
     max_grid_bots: int = 12
     grid_poll_seconds: float = 5.0
     market_retry_attempts: int = 3

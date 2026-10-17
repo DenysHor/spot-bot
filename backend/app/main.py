@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import hashlib
 import json
 import logging
 import secrets
@@ -65,6 +66,8 @@ risk_manager = RiskManager(RiskLimits(
     max_portfolio_allocation_pct=settings.max_portfolio_allocation_pct,
     max_position_pct=settings.max_position_pct,
     reserve_quote_pct=settings.reserve_usdt_pct,
+    max_daily_loss_pct=settings.max_daily_loss_pct,
+    max_open_positions=settings.max_open_positions,
 ))
 
 
@@ -664,7 +667,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.70.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.71.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -819,7 +822,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.70.1",
+        "version": "0.71.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1620,7 +1623,10 @@ async def grid_soft_complete(bot_id: str) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="Soft completion is PAPER-only")
     try:
-        return grid_engine.start_draining(bot_id).snapshot()
+        bot = grid_engine.start_draining(bot_id)
+        store.record_decision(kind="ACTION", source="WEB", status="EXECUTED",
+                              symbol=bot.symbol, bot_id=bot.id, action="SOFT_COMPLETE")
+        return bot.snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1628,7 +1634,11 @@ async def grid_soft_complete(bot_id: str) -> dict:
 @app.post("/api/grid/bots/{bot_id}/buy-control")
 async def grid_buy_control(bot_id: str, request: GridTrailingRequest) -> dict:
     try:
-        return grid_engine.set_manual_buy_pause(bot_id, not request.enabled).snapshot()
+        bot = grid_engine.set_manual_buy_pause(bot_id, not request.enabled)
+        store.record_decision(kind="ACTION", source="WEB", status="EXECUTED",
+                              symbol=bot.symbol, bot_id=bot.id,
+                              action="RESUME_BUYS" if request.enabled else "STOP_BUYS")
+        return bot.snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1646,7 +1656,10 @@ async def grid_liquidate(bot_id: str) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="Emergency liquidation is PAPER-only")
     try:
-        return grid_engine.liquidate_bot(bot_id).snapshot()
+        bot = grid_engine.liquidate_bot(bot_id)
+        store.record_decision(kind="ACTION", source="WEB", status="EXECUTED",
+                              symbol=bot.symbol, bot_id=bot.id, action="LIQUIDATE")
+        return bot.snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1654,7 +1667,10 @@ async def grid_liquidate(bot_id: str) -> dict:
 @app.post("/api/grid/bots/{bot_id}/pause")
 async def grid_pause(bot_id: str) -> dict:
     try:
-        return grid_engine.pause_bot(bot_id).snapshot()
+        bot = grid_engine.pause_bot(bot_id)
+        store.record_decision(kind="ACTION", source="WEB", status="EXECUTED",
+                              symbol=bot.symbol, bot_id=bot.id, action="PAUSE")
+        return bot.snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1876,6 +1892,19 @@ async def analytics_advisor() -> dict:
             },
         })
     rows.sort(key=lambda row: ({"DANGER": 0, "WARNING": 1, "NEUTRAL": 2, "GOOD": 3}[row["severity"]], row["metrics"]["total_pnl"]))
+    journal_day = datetime.now(timezone.utc).date().isoformat()
+    for row in rows:
+        action_codes = sorted(action["code"] for action in row["actions"] if action["code"] != "OPEN")
+        fingerprint_source = "|".join([
+            journal_day, row["bot_id"], row["severity"], row["recommendation"], *action_codes,
+        ])
+        store.record_decision(
+            kind="RECOMMENDATION", source="ADVISOR", status="PROPOSED",
+            symbol=row["symbol"], bot_id=row["bot_id"], action=",".join(action_codes),
+            recommendation=row["recommendation"], reasons=row["reasons"],
+            context={"metrics": row["metrics"]},
+            fingerprint=hashlib.sha256(fingerprint_source.encode()).hexdigest(),
+        )
     allocated = sum(bot.budget_quote for bot in active)
     deployed = sum(row["metrics"]["deployed_quote"] for row in rows)
     return {
@@ -1896,6 +1925,49 @@ async def analytics_advisor() -> dict:
             "У картках значення «Якщо продати зараз» додатково враховує очікувану комісію продажу та облік окремих лотів."
         ),
     }
+
+
+def portfolio_risk_status() -> dict:
+    active = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
+    active_dca = [bot for bot in dca_engine.bots.values() if bot.status not in {"STOPPED", "COMPLETED"}]
+    prices = {
+        **{bot.base_asset: bot.last_price for bot in active if bot.last_price > 0},
+        **{bot.base_asset: bot.last_price for bot in active_dca if bot.last_price > 0},
+    }
+    snapshot = portfolio.snapshot(prices)
+    today = datetime.now(timezone.utc).date()
+    daily_realized = sum(
+        trade.realized_pnl - trade.fee_quote
+        for trade in portfolio.trades
+        if datetime.fromisoformat(trade.timestamp.replace("Z", "+00:00")).date() == today
+    )
+    allocated = sum(
+        position["market_value"] for position in snapshot["positions"]
+    )
+    result = risk_manager.status(
+        total_equity=snapshot["total_equity"], free_quote=snapshot["quote_balance"],
+        allocated_quote=allocated, daily_realized_pnl=daily_realized,
+        active_positions=len(snapshot["positions"]),
+    )
+    return {
+        **result,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "metrics": {
+            "total_equity": snapshot["total_equity"], "free_quote": snapshot["quote_balance"],
+            "allocated_quote": allocated, "daily_realized_pnl": daily_realized,
+            "active_positions": len(snapshot["positions"]),
+        },
+    }
+
+
+@app.get("/api/risk/status")
+async def risk_status() -> dict:
+    return portfolio_risk_status()
+
+
+@app.get("/api/decisions")
+async def decision_journal(limit: int = 100, symbol: str = "") -> dict:
+    return {"decisions": store.list_decisions(limit=limit, symbol=symbol)}
 
 
 async def telegram_daily_advisor() -> str:
@@ -2062,6 +2134,12 @@ async def telegram_command(text: str) -> str:
         if not plan:
             return "✅ Безпечних масових дій зараз немає. Нічого не змінено."
         token = _telegram_confirmation("PAPER_RECOMMENDATIONS", {"plan": plan})
+        for item in plan:
+            store.record_decision(
+                kind="ACTION", source="TELEGRAM", status="AWAITING_CONFIRMATION",
+                symbol=item["symbol"], bot_id=item["bot_id"], action=item["action"],
+                recommendation=item["recommendation"], context={"confirmation_token": token},
+            )
         labels = {"STOP_BUYS": "вимкнути нові покупки", "SOFT_COMPLETE": "м’яко завершити"}
         lines = ["📋 План виконання:"]
         lines.extend(f"• {row['symbol']}: {labels[row['action']]}" for row in plan)
@@ -2101,6 +2179,11 @@ async def telegram_command(text: str) -> str:
             elif item["action"] == "STOP_BUYS":
                 grid_engine.set_manual_buy_pause(bot.id, True, source="TELEGRAM_RECOMMENDATION")
                 completed.append(f"{bot.symbol}: покупки вимкнено")
+            store.record_decision(
+                kind="ACTION", source="TELEGRAM", status="EXECUTED",
+                symbol=bot.symbol, bot_id=bot.id, action=item["action"],
+                recommendation=item["recommendation"],
+            )
         lines = ["✅ План виконано."] + [f"• {row}" for row in completed]
         if skipped:
             lines += ["Пропущено:"] + [f"• {row}" for row in skipped]

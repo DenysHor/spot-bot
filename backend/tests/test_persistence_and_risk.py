@@ -68,3 +68,45 @@ def test_automatic_buy_is_blocked_by_risk_limits(tmp_path):
 
     restarted = GridExecutionEngine(PaperBroker(PaperPortfolio(store=store)), fake_price, store=store)
     assert any(event.event == "BUY_BLOCKED" for event in restarted.get_bot(bot.id).events)
+
+
+def test_portfolio_risk_status_and_daily_loss_guard():
+    risk = RiskManager(RiskLimits(
+        max_portfolio_allocation_pct=50, max_position_pct=10, reserve_quote_pct=20,
+        max_daily_loss_pct=2, max_open_positions=3,
+    ))
+
+    status = risk.status(
+        total_equity=10_000, free_quote=7_000, allocated_quote=3_000,
+        daily_realized_pnl=-250, active_positions=2,
+    )
+    decision = risk.check_buy(
+        total_equity=10_000, free_quote=7_000, current_bot_allocation=3_000,
+        current_position_value=0, requested_quote=100, daily_realized_pnl=-250,
+        active_positions=2, opens_new_position=True,
+    )
+
+    assert status["status"] == "BLOCKED"
+    assert any(check["code"] == "DAILY_LOSS" and not check["passed"] for check in status["checks"])
+    assert decision.allowed is False
+    assert "Daily loss" in decision.reason
+
+
+def test_decision_journal_persists_structured_context(tmp_path):
+    store = SQLiteStore(str(tmp_path / "journal.db"))
+    decision_id = store.record_decision(
+        kind="RECOMMENDATION", source="ADVISOR", status="PROPOSED",
+        symbol="BTCUSDT", action="STOP_BUYS", recommendation="Pause buys",
+        reasons=["downtrend"], context={"score": 42}, fingerprint="daily-btc",
+    )
+    duplicate = store.record_decision(
+        kind="RECOMMENDATION", source="ADVISOR", status="PROPOSED",
+        symbol="BTCUSDT", fingerprint="daily-btc",
+    )
+
+    rows = store.list_decisions(symbol="BTCUSDT")
+    assert decision_id is not None
+    assert duplicate is None
+    assert len(rows) == 1
+    assert rows[0]["reasons"] == ["downtrend"]
+    assert rows[0]["context"] == {"score": 42}

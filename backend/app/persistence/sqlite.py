@@ -167,6 +167,26 @@ class SQLiteStore:
                     message TEXT NOT NULL,
                     error TEXT NOT NULL DEFAULT ''
                 );
+                CREATE TABLE IF NOT EXISTS decision_journal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL DEFAULT '',
+                    bot_id TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    recommendation TEXT NOT NULL DEFAULT '',
+                    reasons_json TEXT NOT NULL DEFAULT '[]',
+                    context_json TEXT NOT NULL DEFAULT '{}',
+                    fingerprint TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_decision_journal_time
+                    ON decision_journal(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_decision_journal_symbol
+                    ON decision_journal(symbol, created_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_journal_fingerprint
+                    ON decision_journal(fingerprint) WHERE fingerprint <> '';
                 CREATE TABLE IF NOT EXISTS market_signal_observations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     observed_at TEXT NOT NULL,
@@ -197,7 +217,7 @@ class SQLiteStore:
                     ON market_signal_observations(symbol, observed_at);
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 6 WHERE version < 6;
+                UPDATE schema_version SET version = 7 WHERE version < 7;
             """)
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
@@ -434,6 +454,48 @@ class SQLiteStore:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM notification_log ORDER BY id DESC LIMIT ?", (limit,)
             )]
+
+    def record_decision(
+        self,
+        *,
+        kind: str,
+        source: str,
+        status: str,
+        symbol: str = "",
+        bot_id: str = "",
+        action: str = "",
+        recommendation: str = "",
+        reasons: list[str] | None = None,
+        context: dict | None = None,
+        fingerprint: str = "",
+    ) -> int | None:
+        with self.connect() as db:
+            cursor = db.execute("""INSERT OR IGNORE INTO decision_journal
+                (created_at, kind, source, symbol, bot_id, action, status,
+                 recommendation, reasons_json, context_json, fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                datetime.now(timezone.utc).isoformat(), kind, source, symbol, bot_id,
+                action, status, recommendation,
+                json.dumps(reasons or [], ensure_ascii=False),
+                json.dumps(context or {}, ensure_ascii=False), fingerprint,
+            ))
+            return cursor.lastrowid if cursor.rowcount else None
+
+    def list_decisions(self, limit: int = 100, symbol: str = "") -> list[dict]:
+        limit = max(1, min(500, int(limit)))
+        with self.connect() as db:
+            if symbol:
+                rows = db.execute("""SELECT * FROM decision_journal
+                    WHERE symbol = ? ORDER BY id DESC LIMIT ?""", (symbol.upper(), limit)).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM decision_journal ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+        return [{
+            **{key: row[key] for key in row.keys() if key not in {"reasons_json", "context_json"}},
+            "reasons": json.loads(row["reasons_json"]),
+            "context": json.loads(row["context_json"]),
+        } for row in rows]
 
     def record_market_signals(self, observed_at: str, items: list[dict]) -> None:
         with self.connect() as db:
