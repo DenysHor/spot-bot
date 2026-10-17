@@ -277,6 +277,8 @@ def test_testnet_history_and_live_readiness_are_reported():
         collecting = await engine.reconciliation()
         assert collecting["live_readiness"]["status"] == "COLLECTING_DATA"
         assert collecting["live_readiness"]["ready_for_live"] is False
+        assert collecting["live_readiness"]["next_actions"]
+        assert collecting["live_readiness"]["pilot_plan"]["live_execution_available"] is False
 
         bot.created_at = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
         bot.completed_cycles = 50
@@ -285,5 +287,8 @@ def test_testnet_history_and_live_readiness_are_reported():
         assert ready["live_readiness"]["status"] == "READY_FOR_SMALL_PILOT"
         assert ready["live_readiness"]["ready_for_live"] is True
         assert ready["live_readiness"]["passed_criteria"] == 6
+        assert ready["live_readiness"]["next_actions"] == []
+        assert ready["live_readiness"]["pilot_plan"]["budget_quote"] == 10.0
+        assert ready["live_readiness"]["pilot_plan"]["manual_activation_required"] is True
 
     asyncio.run(scenario())

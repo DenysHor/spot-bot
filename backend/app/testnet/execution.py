@@ -160,14 +160,44 @@ class TestnetGridEngine:
         enough_data = elapsed_days >= 14 and bot.completed_cycles >= 50
         ready = enough_data and passed == len(criteria)
         status = "READY_FOR_SMALL_PILOT" if ready else "NOT_READY" if enough_data else "COLLECTING_DATA"
+        missing = [row for row in criteria if not row["passed"]]
+        pilot_budget = min(25.0, max(5.0, round(bot.budget_quote * 0.10, 2)))
+        next_actions = [
+            f"Продовжити TESTNET ще {max(0.0, 14 - elapsed_days):.1f} днів"
+            if elapsed_days < 14 else None,
+            f"Дочекатися ще {max(0, 50 - bot.completed_cycles)} завершених циклів"
+            if bot.completed_cycles < 50 else None,
+            "Не переходити до LIVE, доки чистий результат не стане позитивним"
+            if snapshot["total_pnl"] <= 0 else None,
+            "Зменшити ризик або змінити параметри: просадка перевищує 5%"
+            if max_drawdown_pct > 5 else None,
+            "Перевірити крок сітки: комісії забирають понад 30% валового результату"
+            if fee_drag_pct > 30 else None,
+            f"Потрібно ще {max(0.0, 7 - safe_days):.1f} днів без помилок синхронізації"
+            if safe_days < 7 or audit_status != "SAFE" else None,
+        ]
         return {
             "status": status, "ready_for_live": ready, "passed_criteria": passed,
             "total_criteria": len(criteria), "progress_pct": passed / len(criteria) * 100,
             "elapsed_days": elapsed_days, "safe_days": safe_days,
             "max_drawdown_pct": max_drawdown_pct, "fee_drag_pct": fee_drag_pct,
-            "criteria": criteria,
+            "criteria": criteria, "missing_criteria": missing,
+            "next_actions": [action for action in next_actions if action],
+            "pilot_plan": {
+                "available": ready,
+                "live_execution_available": False,
+                "budget_quote": pilot_budget,
+                "budget_share_pct": 10.0,
+                "max_budget_quote": 25.0,
+                "single_pair_only": True,
+                "withdrawals_must_be_disabled": True,
+                "ip_allowlist_required": True,
+                "manual_activation_required": True,
+                "review_after_days": 7,
+            },
             "recommendation": (
-                "Критерії малого LIVE-пілота виконані; LIVE залишається програмно вимкненим."
+                f"Критерії малого LIVE-пілота виконані. Орієнтовний ліміт: {pilot_budget:.2f} USDT; "
+                "LIVE залишається програмно вимкненим до окремого рішення й перевірки ключів."
                 if ready else "Продовжуйте TESTNET-збір. LIVE-торгівля залишається вимкненою."
             ),
         }
