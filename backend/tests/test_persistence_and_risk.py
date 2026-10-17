@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from app.grid.execution import GridExecutionEngine
 from app.paper.broker import PaperBroker
@@ -110,3 +111,23 @@ def test_decision_journal_persists_structured_context(tmp_path):
     assert len(rows) == 1
     assert rows[0]["reasons"] == ["downtrend"]
     assert rows[0]["context"] == {"score": 42}
+
+
+def test_decision_journal_evaluates_24h_and_72h_outcomes(tmp_path):
+    store = SQLiteStore(str(tmp_path / "outcomes.db"))
+    decision_id = store.record_decision(
+        kind="RECOMMENDATION", source="ADVISOR", status="PROPOSED",
+        symbol="BTCUSDT", bot_id="bot-1", recommendation="Continue",
+        context={"metrics": {"total_pnl": 5.0}},
+    )
+    now = datetime.now(timezone.utc)
+    with store.connect() as db:
+        db.execute("UPDATE decision_journal SET created_at = ? WHERE id = ?",
+                   ((now - timedelta(hours=73)).isoformat(), decision_id))
+
+    assert store.evaluate_decisions({"bot-1": 8.5}, now=now) == 2
+    row = store.list_decisions()[0]
+    assert row["outcome_24h_status"] == "IMPROVED"
+    assert row["outcome_72h_status"] == "IMPROVED"
+    assert row["outcome_24h_delta"] == 3.5
+    assert row["outcome_72h_delta"] == 3.5

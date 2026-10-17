@@ -11,8 +11,24 @@ def test_telegram_help_lists_safe_operational_commands():
     assert "/apply_recommendations" in response
     assert "/sync_testnet" in response
     assert "/repair_testnet" in response
+    assert "/risk" in response
+    assert "/journal" in response
     assert "/confirm" in response
     assert "LIVE-операції" in response
+
+
+def test_risk_command_reports_limits(monkeypatch):
+    monkeypatch.setattr(main, "portfolio_risk_status", lambda: {
+        "status": "SAFE", "reasons": [],
+        "limits": {"max_portfolio_allocation_pct": 50, "max_open_positions": 8},
+        "metrics": {"allocated_quote": 2500, "total_equity": 10000,
+                    "free_quote": 7500, "daily_realized_pnl": -0.05, "active_positions": 6},
+    })
+
+    response = asyncio.run(main.telegram_command("/risk"))
+
+    assert "БЕЗПЕЧНО" in response
+    assert "6 / 8" in response
 
 
 def test_apply_recommendations_requires_confirmation(monkeypatch):

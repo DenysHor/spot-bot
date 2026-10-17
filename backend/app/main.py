@@ -667,7 +667,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.71.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.72.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -822,7 +822,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.71.0",
+        "version": "0.72.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1892,6 +1892,7 @@ async def analytics_advisor() -> dict:
             },
         })
     rows.sort(key=lambda row: ({"DANGER": 0, "WARNING": 1, "NEUTRAL": 2, "GOOD": 3}[row["severity"]], row["metrics"]["total_pnl"]))
+    store.evaluate_decisions({row["bot_id"]: row["metrics"]["total_pnl"] for row in rows})
     journal_day = datetime.now(timezone.utc).date().isoformat()
     for row in rows:
         action_codes = sorted(action["code"] for action in row["actions"] if action["code"] != "OPEN")
@@ -1934,6 +1935,45 @@ def portfolio_risk_status() -> dict:
         **{bot.base_asset: bot.last_price for bot in active if bot.last_price > 0},
         **{bot.base_asset: bot.last_price for bot in active_dca if bot.last_price > 0},
     }
+
+
+def telegram_risk_message() -> str:
+    data = portfolio_risk_status()
+    metrics = data["metrics"]
+    lines = [
+        f"🛡 Портфельний ризик: {'БЕЗПЕЧНО' if data['status'] == 'SAFE' else 'ПОКУПКИ ЗАБЛОКОВАНО'}",
+        f"Залучено: {metrics['allocated_quote']:.2f} / "
+        f"{metrics['total_equity'] * data['limits']['max_portfolio_allocation_pct'] / 100:.2f} USDT",
+        f"Вільно: {metrics['free_quote']:.2f} USDT",
+        f"Результат за добу: {metrics['daily_realized_pnl']:+.2f} USDT",
+        f"Позиції: {metrics['active_positions']} / {data['limits']['max_open_positions']}",
+    ]
+    if data["reasons"]:
+        lines.extend(f"• {reason}" for reason in data["reasons"])
+    return "\n".join(lines)
+
+
+def telegram_journal_message(limit: int = 10) -> str:
+    rows = store.list_decisions(limit=limit)
+    if not rows:
+        return "📒 Журнал рішень поки порожній. Відкрийте Аналітику для формування рекомендацій."
+    labels = {
+        "PROPOSED": "запропоновано", "AWAITING_CONFIRMATION": "очікує підтвердження",
+        "EXECUTED": "виконано", "SKIPPED": "пропущено",
+    }
+    lines = ["📒 Останні рішення"]
+    for row in rows:
+        created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+        when = created.astimezone(ZoneInfo("Europe/Kiev")).strftime("%d.%m %H:%M")
+        subject = row["symbol"] or "Портфель"
+        decision = row["action"] or row["recommendation"] or row["kind"]
+        outcome = ""
+        if row.get("outcome_72h_status"):
+            outcome = f" · 72г {row['outcome_72h_status']} {row['outcome_72h_delta']:+.2f}"
+        elif row.get("outcome_24h_status"):
+            outcome = f" · 24г {row['outcome_24h_status']} {row['outcome_24h_delta']:+.2f}"
+        lines.append(f"• {when} · {subject} · {decision} · {labels.get(row['status'], row['status'])}{outcome}")
+    return "\n".join(lines)
     snapshot = portfolio.snapshot(prices)
     today = datetime.now(timezone.utc).date()
     daily_realized = sum(
@@ -2063,6 +2103,8 @@ async def telegram_command(text: str) -> str:
             "🤖 Команди Spot Grid Lab",
             "/status — стан PAPER-портфеля",
             "/recommendations — актуальні рекомендації",
+            "/risk — портфельні ліміти та дозвіл нових покупок",
+            "/journal — останні рекомендації, дії та їх результат",
             "/apply_recommendations — план безпечних масових дій",
             "/pause_buys ПАРА — вимкнути нові покупки",
             "/resume_buys ПАРА — перевірити ринок і дозволити покупки",
@@ -2078,6 +2120,10 @@ async def telegram_command(text: str) -> str:
         return notifier.daily_report()
     if command == "/recommendations":
         return await telegram_daily_advisor()
+    if command == "/risk":
+        return telegram_risk_message()
+    if command == "/journal":
+        return telegram_journal_message()
     if command == "/schedules":
         pending = [row for row in scheduled_grid_launches if row["status"] == "PENDING"]
         recent = [row for row in reversed(scheduled_grid_launches) if row["status"] != "PENDING"][:3]
@@ -2349,6 +2395,20 @@ notifier.weekly_report_provider = weekly_evaluation_message
 
 def telegram_health_alerts(now: datetime) -> list[dict]:
     alerts = []
+    risk = portfolio_risk_status()
+    previous_risk = store.get_notification_state("portfolio_risk_status")
+    if risk["status"] != previous_risk:
+        store.set_notification_state("portfolio_risk_status", risk["status"])
+        if risk["status"] == "BLOCKED":
+            alerts.append({
+                "key": "portfolio:RISK_BLOCKED",
+                "message": "\n".join([
+                    "🚨 Spot Grid Lab · Нові покупки заблоковано",
+                    *risk["reasons"],
+                    "Продажі та захисне завершення залишаються доступними.",
+                    "Команда /risk покаже актуальні ліміти.",
+                ]),
+            })
     for bot in grid_engine.bots.values():
         if bot.status == "STOPPED":
             continue

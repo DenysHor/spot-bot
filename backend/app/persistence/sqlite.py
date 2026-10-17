@@ -179,7 +179,13 @@ class SQLiteStore:
                     recommendation TEXT NOT NULL DEFAULT '',
                     reasons_json TEXT NOT NULL DEFAULT '[]',
                     context_json TEXT NOT NULL DEFAULT '{}',
-                    fingerprint TEXT NOT NULL DEFAULT ''
+                    fingerprint TEXT NOT NULL DEFAULT '',
+                    outcome_24h_delta REAL,
+                    outcome_24h_status TEXT NOT NULL DEFAULT '',
+                    evaluated_24h_at TEXT,
+                    outcome_72h_delta REAL,
+                    outcome_72h_status TEXT NOT NULL DEFAULT '',
+                    evaluated_72h_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_decision_journal_time
                     ON decision_journal(created_at DESC);
@@ -217,7 +223,7 @@ class SQLiteStore:
                     ON market_signal_observations(symbol, observed_at);
                 DELETE FROM schema_version
                 WHERE version < (SELECT MAX(version) FROM schema_version);
-                UPDATE schema_version SET version = 7 WHERE version < 7;
+                UPDATE schema_version SET version = 8 WHERE version < 8;
             """)
             self._ensure_column(db, "grid_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "grid_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
@@ -250,6 +256,12 @@ class SQLiteStore:
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "max_drawdown_pct", "REAL NOT NULL DEFAULT 12")
+            self._ensure_column(db, "decision_journal", "outcome_24h_delta", "REAL")
+            self._ensure_column(db, "decision_journal", "outcome_24h_status", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "decision_journal", "evaluated_24h_at", "TEXT")
+            self._ensure_column(db, "decision_journal", "outcome_72h_delta", "REAL")
+            self._ensure_column(db, "decision_journal", "outcome_72h_status", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "decision_journal", "evaluated_72h_at", "TEXT")
 
     @staticmethod
     def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -496,6 +508,35 @@ class SQLiteStore:
             "reasons": json.loads(row["reasons_json"]),
             "context": json.loads(row["context_json"]),
         } for row in rows]
+
+    def evaluate_decisions(self, bot_pnl: dict[str, float], now: datetime | None = None) -> int:
+        current = now or datetime.now(timezone.utc)
+        updated = 0
+        with self.connect() as db:
+            rows = db.execute("""SELECT * FROM decision_journal
+                WHERE kind = 'RECOMMENDATION'
+                AND (evaluated_24h_at IS NULL OR evaluated_72h_at IS NULL)""").fetchall()
+            for row in rows:
+                pnl = bot_pnl.get(row["bot_id"])
+                if pnl is None:
+                    continue
+                created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                age_hours = (current - created).total_seconds() / 3600
+                context = json.loads(row["context_json"] or "{}")
+                baseline = float((context.get("metrics") or {}).get("total_pnl", 0.0))
+                delta = pnl - baseline
+                status = "IMPROVED" if delta > 0.01 else "WORSENED" if delta < -0.01 else "STABLE"
+                if age_hours >= 24 and row["evaluated_24h_at"] is None:
+                    db.execute("""UPDATE decision_journal SET outcome_24h_delta = ?,
+                        outcome_24h_status = ?, evaluated_24h_at = ? WHERE id = ?""",
+                               (delta, status, current.isoformat(), row["id"]))
+                    updated += 1
+                if age_hours >= 72 and row["evaluated_72h_at"] is None:
+                    db.execute("""UPDATE decision_journal SET outcome_72h_delta = ?,
+                        outcome_72h_status = ?, evaluated_72h_at = ? WHERE id = ?""",
+                               (delta, status, current.isoformat(), row["id"]))
+                    updated += 1
+        return updated
 
     def record_market_signals(self, observed_at: str, items: list[dict]) -> None:
         with self.connect() as db:
