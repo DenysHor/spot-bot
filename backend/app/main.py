@@ -664,7 +664,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.70.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.70.1", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -819,7 +819,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.70.0",
+        "version": "0.70.1",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1415,8 +1415,8 @@ async def dca_preflight(request: DcaStartRequest) -> dict:
 
 @app.post("/api/dca/bots/start")
 async def dca_start(request: DcaStartRequest) -> dict:
-    if settings.trading_mode != "PAPER":
-        raise HTTPException(status_code=409, detail="DCA execution v0.7 is PAPER-only")
+    if settings.trading_mode not in {"PAPER", "TESTNET"}:
+        raise HTTPException(status_code=409, detail="DCA execution is PAPER-only")
     try:
         checked = await dca_preflight_analysis(request)
         if not checked["allowed"]:
