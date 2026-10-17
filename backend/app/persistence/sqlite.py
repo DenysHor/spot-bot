@@ -128,6 +128,7 @@ class SQLiteStore:
                     order_quote REAL NOT NULL,
                     interval_seconds INTEGER NOT NULL,
                     dip_trigger_pct REAL NOT NULL,
+                    max_drawdown_pct REAL NOT NULL DEFAULT 12,
                     created_at TEXT NOT NULL,
                     next_buy_at TEXT NOT NULL,
                     last_price REAL NOT NULL,
@@ -228,6 +229,7 @@ class SQLiteStore:
             self._ensure_column(db, "dca_bots", "last_success_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(db, "dca_bots", "consecutive_errors", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(db, "dca_bots", "paused_reason", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(db, "dca_bots", "max_drawdown_pct", "REAL NOT NULL DEFAULT 12")
 
     @staticmethod
     def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -364,10 +366,13 @@ class SQLiteStore:
 
     def save_dca_bot(self, bot) -> None:
         with self.connect() as db:
-            db.execute("""INSERT OR REPLACE INTO dca_bots VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            db.execute("""INSERT OR REPLACE INTO dca_bots
+                (id, symbol, base_asset, status, budget_quote, order_quote, interval_seconds,
+                 dip_trigger_pct, max_drawdown_pct, created_at, next_buy_at, last_price,
+                 last_buy_price, spent_quote, buy_count, last_success_at, consecutive_errors, paused_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 bot.id, bot.symbol, bot.base_asset, bot.status, bot.budget_quote,
-                bot.order_quote, bot.interval_seconds, bot.dip_trigger_pct, bot.created_at,
+                bot.order_quote, bot.interval_seconds, bot.dip_trigger_pct, bot.max_drawdown_pct, bot.created_at,
                 bot.next_buy_at, bot.last_price, bot.last_buy_price, bot.spent_quote, bot.buy_count,
                 bot.last_success_at, bot.consecutive_errors, bot.paused_reason,
             ))

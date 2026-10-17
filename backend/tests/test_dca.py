@@ -66,3 +66,17 @@ def test_dca_buy_is_blocked_by_risk_manager():
     assert portfolio.trades == []
     assert bot.events[-1].event == "BUY_BLOCKED"
     assert "risk limit" in bot.events[-1].message.lower()
+
+
+def test_dca_auto_pauses_at_configured_drawdown():
+    portfolio = PaperPortfolio(10_000)
+    engine = DcaExecutionEngine(PaperBroker(portfolio), fake_price, risk())
+    bot = engine.start_bot("BTCUSDT", "BTC", 100, 1_000, 100, 3600, 5, max_drawdown_pct=10)
+    start = datetime.fromisoformat(bot.created_at)
+
+    asyncio.run(engine.tick_bot(bot.id, price=100, now=start))
+    asyncio.run(engine.tick_bot(bot.id, price=89, now=start + timedelta(minutes=10)))
+
+    assert bot.status == "PAUSED"
+    assert bot.events[-1].event == "AUTO_PAUSED"
+    assert "10.0%" in bot.paused_reason

@@ -198,6 +198,39 @@ async def signal_analysis(symbol: str, base_asset: str) -> dict:
     return analyze_symbol(ticker, rows, base_asset)
 
 
+async def dca_preflight_analysis(request) -> dict:
+    symbol = await ensure_active_quote_symbol(request.symbol)
+    budget = automation_budget_status(symbol, request.budget_quote, check_grid_limit=False)
+    ticker, rows = await asyncio.gather(
+        market.ticker_24h(symbol), current_klines(symbol, interval="4h", limit=60),
+    )
+    analysis = analyze_symbol(ticker, rows, base_asset_from_symbol(symbol))
+    regime = analysis["regime"]["name"]
+    change_24h = float(ticker.get("priceChangePercent", 0.0))
+    warnings: list[str] = []
+    if regime == "DOWNTREND":
+        warnings.append("Спадний режим: новий DCA-запуск заблоковано")
+    if change_24h <= -8:
+        warnings.append("Падіння за 24 години перевищує 8%")
+    if request.order_quote * (1 + broker.fee_rate) > request.budget_quote:
+        warnings.append("Одна покупка разом із комісією перевищує бюджет")
+    allowed = budget["allowed"] and regime != "DOWNTREND" and change_24h > -8 and not any(
+        "перевищує бюджет" in warning for warning in warnings
+    )
+    return {
+        "symbol": symbol, "allowed": allowed,
+        "verdict": "SUITABLE" if allowed and not warnings else "CAUTION" if allowed else "BLOCKED",
+        "budget": budget,
+        "market": {"price": float(ticker["lastPrice"]), "change_24h_pct": change_24h,
+                   "rsi14": analysis["rsi14"], "regime": regime},
+        "parameters": {"budget_quote": request.budget_quote, "order_quote": request.order_quote,
+                       "interval_minutes": request.interval_minutes,
+                       "dip_trigger_pct": request.dip_trigger_pct,
+                       "max_drawdown_pct": request.max_drawdown_pct},
+        "warnings": warnings + budget["reasons"],
+    }
+
+
 def recommend_automation(analysis: dict, min_signal_score: int = 65) -> dict:
     """Choose one PAPER automation family from the same market evidence."""
     regime = analysis["regime"]
@@ -230,7 +263,7 @@ def recommend_automation(analysis: dict, min_signal_score: int = 65) -> dict:
     }
 
 
-def automation_budget_status(symbol: str, requested_budget: float) -> dict:
+def automation_budget_status(symbol: str, requested_budget: float, check_grid_limit: bool = True) -> dict:
     active_grid = [bot for bot in grid_engine.bots.values() if bot.status != "STOPPED"]
     active_dca = [bot for bot in dca_engine.bots.values() if bot.status != "STOPPED"]
     active_signal = [bot for bot in signal_engine.bots.values() if bot.status != "STOPPED"]
@@ -246,7 +279,7 @@ def automation_budget_status(symbol: str, requested_budget: float) -> dict:
         reasons.append(f"Для {symbol} уже існує активний або призупинений DCA-бот")
     if any(bot.symbol == symbol for bot in active_signal):
         reasons.append(f"Для {symbol} уже існує активний або призупинений Сигнальний бот")
-    if len(active_grid) >= settings.max_grid_bots:
+    if check_grid_limit and len(active_grid) >= settings.max_grid_bots:
         reasons.append(f"Досягнуто ліміт {settings.max_grid_bots} Grid-ботів")
     if requested_budget > pair_cap + 1e-9:
         reasons.append(f"Бюджет однієї пари не може перевищувати {pair_cap:.2f} {settings.quote_asset}")
@@ -631,7 +664,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.69.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.70.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -711,10 +744,11 @@ class GridWalkForwardRequest(GridOptimizeRequest):
 
 class DcaStartRequest(BaseModel):
     symbol: str = "BTCUSDT"
-    budget_quote: float = Field(default=1000.0, gt=0)
-    order_quote: float = Field(default=100.0, gt=0)
+    budget_quote: float = Field(default=500.0, gt=0)
+    order_quote: float = Field(default=50.0, gt=0)
     interval_minutes: int = Field(default=1440, ge=1, le=525600)
     dip_trigger_pct: float = Field(default=5.0, gt=0, le=50)
+    max_drawdown_pct: float = Field(default=12.0, gt=0, le=50)
 
 
 class SignalStartRequest(BaseModel):
@@ -785,7 +819,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.69.0",
+        "version": "0.70.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1369,11 +1403,25 @@ async def dca_bot(bot_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/dca/preflight")
+async def dca_preflight(request: DcaStartRequest) -> dict:
+    try:
+        return await dca_preflight_analysis(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"DCA preflight failed: {exc}") from exc
+
+
 @app.post("/api/dca/bots/start")
 async def dca_start(request: DcaStartRequest) -> dict:
     if settings.trading_mode != "PAPER":
         raise HTTPException(status_code=409, detail="DCA execution v0.7 is PAPER-only")
     try:
+        checked = await dca_preflight_analysis(request)
+        if not checked["allowed"]:
+            reasons = checked["warnings"] or ["ринкові або портфельні обмеження"]
+            raise ValueError("DCA launch blocked: " + "; ".join(reasons))
         symbol = await ensure_active_quote_symbol(request.symbol)
         base_asset = base_asset_from_symbol(symbol)
         price = await current_price(symbol)
@@ -1382,6 +1430,7 @@ async def dca_start(request: DcaStartRequest) -> dict:
             budget_quote=request.budget_quote, order_quote=request.order_quote,
             interval_seconds=request.interval_minutes * 60,
             dip_trigger_pct=request.dip_trigger_pct,
+            max_drawdown_pct=request.max_drawdown_pct,
         ).snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

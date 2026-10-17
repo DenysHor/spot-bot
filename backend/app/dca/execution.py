@@ -30,6 +30,7 @@ class DcaBotState:
     order_quote: float
     interval_seconds: int
     dip_trigger_pct: float
+    max_drawdown_pct: float
     created_at: str
     next_buy_at: str
     last_price: float
@@ -44,6 +45,11 @@ class DcaBotState:
     def snapshot(self) -> dict:
         result = asdict(self)
         result["remaining_budget"] = max(0.0, self.budget_quote - self.spent_quote)
+        quantity = sum(event.quantity for event in self.events if event.event == "BUY_FILLED")
+        result["quantity"] = quantity
+        result["market_value"] = quantity * self.last_price
+        result["unrealized_pnl"] = result["market_value"] - self.spent_quote
+        result["return_pct"] = (result["unrealized_pnl"] / self.spent_quote * 100) if self.spent_quote else 0.0
         return result
 
 
@@ -78,11 +84,12 @@ class DcaExecutionEngine:
             self.store.save_dca_bot(bot)
 
     def start_bot(self, symbol: str, base_asset: str, reference_price: float, budget_quote: float,
-                  order_quote: float, interval_seconds: int, dip_trigger_pct: float) -> DcaBotState:
+                  order_quote: float, interval_seconds: int, dip_trigger_pct: float,
+                  max_drawdown_pct: float = 12.0) -> DcaBotState:
         symbol = symbol.upper()
         if any(bot.symbol == symbol and bot.status == "RUNNING" for bot in self.bots.values()):
             raise ValueError(f"A running DCA bot already exists for {symbol}")
-        if min(reference_price, budget_quote, order_quote, dip_trigger_pct) <= 0:
+        if min(reference_price, budget_quote, order_quote, dip_trigger_pct, max_drawdown_pct) <= 0:
             raise ValueError("price, budget, order and dip trigger must be positive")
         if order_quote * (1 + self.broker.fee_rate) > budget_quote:
             raise ValueError("DCA order including fee cannot exceed bot budget")
@@ -92,7 +99,8 @@ class DcaExecutionEngine:
         bot = DcaBotState(
             id=uuid4().hex[:12], symbol=symbol, base_asset=base_asset, status="RUNNING",
             budget_quote=budget_quote, order_quote=order_quote, interval_seconds=interval_seconds,
-            dip_trigger_pct=dip_trigger_pct, created_at=self._iso(now), next_buy_at=self._iso(now),
+            dip_trigger_pct=dip_trigger_pct, max_drawdown_pct=max_drawdown_pct,
+            created_at=self._iso(now), next_buy_at=self._iso(now),
             last_price=reference_price,
         )
         bot.events.append(DcaEvent(self._iso(now), "BOT_STARTED", reference_price,
@@ -154,6 +162,15 @@ class DcaExecutionEngine:
         bot.last_price = current
         bot.last_success_at = self._iso(current_time)
         bot.consecutive_errors = 0
+        filled_quantity = sum(event.quantity for event in bot.events if event.event == "BUY_FILLED")
+        average_entry = bot.spent_quote / filled_quantity if filled_quantity else 0.0
+        if average_entry and current <= average_entry * (1 - bot.max_drawdown_pct / 100):
+            bot.status = "PAUSED"
+            bot.paused_reason = f"Захисна пауза: просадка досягла {bot.max_drawdown_pct:.1f}%"
+            bot.events.append(DcaEvent(self._iso(current_time), "AUTO_PAUSED", current,
+                                       message=bot.paused_reason))
+            self._persist(bot)
+            return bot
         scheduled = current_time >= datetime.fromisoformat(bot.next_buy_at)
         dip = bot.last_buy_price > 0 and current <= bot.last_buy_price * (1 - bot.dip_trigger_pct / 100)
         if not scheduled and not dip:

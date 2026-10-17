@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.69.0">
-  <link rel="stylesheet" href="/static/advisor.css?v=0.69.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.70.0">
+  <link rel="stylesheet" href="/static/advisor.css?v=0.70.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -185,10 +185,14 @@
       <div class="panel-head"><div><p class="eyebrow">РОЗУМНЕ НАКОПИЧЕННЯ</p><h2>Smart DCA</h2></div></div>
       <div class="dca-layout">
         <form id="dca-form" class="dca-form">
-          <label>Загальний бюджет, USDT<input id="dca-budget" type="number" value="1000" min="10" required></label>
-          <label>Одна покупка, USDT<input id="dca-order" type="number" value="100" min="1" required></label>
+          <label>Binance Spot USDT-пара<input id="dca-symbol" value="BTCUSDT" autocomplete="off" required></label>
+          <label>Загальний бюджет, USDT<input id="dca-budget" type="number" value="500" min="10" required></label>
+          <label>Одна покупка, USDT<input id="dca-order" type="number" value="50" min="1" required></label>
           <label>Інтервал, хвилин<input id="dca-interval" type="number" value="1440" min="1" required></label>
           <label>Докупити при падінні, %<input id="dca-dip" type="number" value="5" min="0.1" max="50" step="0.1" required></label>
+          <label>Захисна пауза при просадці, %<input id="dca-max-drawdown" type="number" value="12" min="1" max="50" step="0.5" required></label>
+          <button id="dca-analyze" class="ghost" type="button">Перевірити пару та ризики</button>
+          <div id="dca-preflight" class="grid-preflight"><p>Перед запуском перевіримо режим ринку та портфельні ліміти.</p></div>
           <button type="submit">Запустити PAPER DCA</button>
         </form>
         <div id="dca-bots" class="bot-list dca-list"><p class="empty">DCA-ботів ще немає.</p></div>
@@ -233,6 +237,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openAdvisor()"><span>◫</span>Аналітика</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.69.0"></script>
+  <script src="/static/app.js?v=0.70.0"></script>
 </body>
 </html>
