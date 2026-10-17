@@ -42,6 +42,7 @@ testnet = BinanceTestnetClient(settings.binance_api_key, settings.binance_api_se
 testnet_health = {"verified": False, "last_checked_at": "", "last_error": ""}
 testnet_audit_cache: dict | None = None
 TESTNET_AUDIT_TIMEOUT_SECONDS = 8
+testnet_audit_lock = asyncio.Lock()
 auth = SessionAuth(
     settings.dashboard_username, settings.dashboard_password,
     settings.session_secret, settings.secure_cookies,
@@ -449,6 +450,9 @@ async def notify_testnet_event(event: str, bot, order) -> None:
         "SELL_FILLED": "Продаж виконано; цикл завершено",
         "BUY_AUTO_PAUSED": "Нові покупки автоматично призупинено через нестачу тестового USDT",
         "SYNC_ERROR": f"Помилка синхронізації: {bot.last_error}",
+        "SYNC_DEGRADED": "Три помилки синхронізації поспіль: нові заявки на купівлю більше не створюються; чинні заявки можуть виконатися",
+        "SYNC_RECOVERED": "Синхронізацію відновлено. Покупки залишаються вимкненими до ручної перевірки",
+        "BUY_MANUAL_RESUMED": "Перевірка безпеки успішна: нові покупки відновлено вручну",
         "EMERGENCY_STOP": "Аварійна зупинка: усі відкриті TESTNET-заявки скасовано",
     }
     label = labels.get(event)
@@ -667,7 +671,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.72.1", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.73.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -822,7 +826,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.72.1",
+        "version": "0.73.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -913,16 +917,30 @@ async def testnet_grid_sync() -> dict:
     return bot.snapshot()
 
 
+@app.post("/api/testnet/grid-bot/resume-buys")
+async def testnet_grid_resume_buys() -> dict:
+    require_testnet_mode()
+    try:
+        return (await testnet_engine.resume_buys()).snapshot()
+    except (ValueError, BinanceTestnetError) as exc:
+        raise HTTPException(status_code=409, detail=describe_exception(exc)) from exc
+
+
 @app.get("/api/testnet/reconciliation")
 async def testnet_reconciliation() -> dict:
     global testnet_audit_cache
     require_testnet_mode()
     if not testnet_engine.bot:
         raise HTTPException(status_code=404, detail="TESTNET-бота немає")
+    if testnet_audit_lock.locked() and testnet_audit_cache:
+        fallback = dict(testnet_audit_cache)
+        fallback.update(cached=True, stale=False, audit_in_progress=True)
+        return fallback
     try:
-        result = await asyncio.wait_for(
-            testnet_engine.reconciliation(), timeout=TESTNET_AUDIT_TIMEOUT_SECONDS,
-        )
+        async with testnet_audit_lock:
+            result = await asyncio.wait_for(
+                testnet_engine.audit(), timeout=TESTNET_AUDIT_TIMEOUT_SECONDS,
+            )
         result.update(cached=False, stale=False)
         testnet_audit_cache = result
         return result

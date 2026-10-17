@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.72.1**. Decision outcomes are evaluated after 24/72 hours, Telegram exposes risk and journal commands, and blocked-risk transitions trigger an alert. LIVE execution remains disabled.
+> Current development version: **0.73.0**. Testnet synchronization uses controlled retries, single-flight audits, automatic buy protection, and a one-hour stability metric. LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.

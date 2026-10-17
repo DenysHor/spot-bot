@@ -19,7 +19,7 @@ def test_testnet_reconciliation_timeout_returns_cached_audit(monkeypatch):
 
     monkeypatch.setattr(main.settings, "trading_mode", "TESTNET")
     monkeypatch.setattr(main.testnet_engine, "bot", SimpleNamespace(symbol="XRPUSDT"))
-    monkeypatch.setattr(main.testnet_engine, "reconciliation", slow_reconciliation)
+    monkeypatch.setattr(main.testnet_engine, "audit", slow_reconciliation)
     monkeypatch.setattr(main.testnet_engine, "_record_sync_health", lambda *args: None)
     monkeypatch.setattr(main.testnet_engine, "_save", lambda: None)
     monkeypatch.setattr(main.testnet_engine, "_stability_summary", lambda: {"errors_7d": 1})
@@ -45,9 +45,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.72.1" in page.text
-    assert "/static/advisor.css?v=0.72.1" in page.text
-    assert "/static/app.js?v=0.72.1" in page.text
+    assert "/static/styles.css?v=0.73.0" in page.text
+    assert "/static/advisor.css?v=0.73.0" in page.text
+    assert "/static/app.js?v=0.73.0" in page.text
     assert 'id="risk-status"' in page.text
     assert 'id="decision-journal"' in page.text
     assert "TESTNET-бот уже працює" in script.text

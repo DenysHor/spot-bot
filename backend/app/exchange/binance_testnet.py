@@ -1,5 +1,7 @@
 import hashlib
 import hmac
+import asyncio
+import time
 from decimal import Decimal, ROUND_DOWN
 from typing import Any
 from urllib.parse import urlencode
@@ -20,20 +22,44 @@ class BinanceTestnetClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.timeout = timeout
+        self._server_time_offset_ms = 0
+        self._server_time_cached_at = 0.0
 
     @property
     def configured(self) -> bool:
         return bool(self.api_key and self.api_secret)
 
     async def _public(self, path: str) -> Any:
-        async with httpx.AsyncClient(base_url=self.BASE_URL, timeout=self.timeout) as client:
-            response = await client.get(path)
-        return self._decode(response)
+        return await self._request_with_retry("GET", path)
+
+    async def _request_with_retry(self, method: str, path: str, **kwargs) -> Any:
+        last_error = None
+        attempts = 2 if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                async with httpx.AsyncClient(base_url=self.BASE_URL, timeout=self.timeout) as client:
+                    response = await client.request(method, path, **kwargs)
+                if response.status_code not in {429, 500, 502, 503, 504} or attempt + 1 == attempts:
+                    return self._decode(response)
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+                if attempt + 1 == attempts:
+                    raise BinanceTestnetError(f"Binance Testnet network error: {exc}") from exc
+            await asyncio.sleep(0.35 * (attempt + 1))
+        raise BinanceTestnetError(f"Binance Testnet request failed: {last_error}")
+
+    async def _server_time(self) -> int:
+        now = time.monotonic()
+        if now - self._server_time_cached_at > 30:
+            data = await self._request_with_retry("GET", "/api/v3/time")
+            self._server_time_offset_ms = int(data["serverTime"]) - int(time.time() * 1000)
+            self._server_time_cached_at = now
+        return int(time.time() * 1000) + self._server_time_offset_ms
 
     async def _signed(self, method: str, path: str, params: dict) -> Any:
         if not self.configured:
             raise BinanceTestnetError("Testnet API key and secret are not configured")
-        server_time = int((await self._public("/api/v3/time"))["serverTime"])
+        server_time = await self._server_time()
         signed_params = {**params, "recvWindow": 5000, "timestamp": server_time}
         payload = urlencode(signed_params, encoding="utf-8")
         signature = hmac.new(
@@ -41,14 +67,11 @@ class BinanceTestnetClient:
         ).hexdigest()
         body = f"{payload}&signature={signature}"
         headers = {"X-MBX-APIKEY": self.api_key, "Content-Type": "application/x-www-form-urlencoded"}
-        async with httpx.AsyncClient(base_url=self.BASE_URL, timeout=self.timeout) as client:
-            if method == "GET":
-                response = await client.get(f"{path}?{body}", headers=headers)
-            elif method == "DELETE":
-                response = await client.delete(f"{path}?{body}", headers=headers)
-            else:
-                response = await client.request(method, path, headers=headers, content=body)
-        return self._decode(response)
+        if method == "GET":
+            return await self._request_with_retry("GET", f"{path}?{body}", headers=headers)
+        if method == "DELETE":
+            return await self._request_with_retry(method, f"{path}?{body}", headers=headers)
+        return await self._request_with_retry(method, path, headers=headers, content=body)
 
     @staticmethod
     def _decode(response: httpx.Response) -> Any:

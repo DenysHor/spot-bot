@@ -281,6 +281,8 @@ def test_testnet_history_and_live_readiness_are_reported():
         assert collecting["live_readiness"]["pilot_plan"]["live_execution_available"] is False
         assert collecting["stability"]["samples_24h"] >= 1
         assert collecting["stability"]["success_rate_24h_pct"] == 100.0
+        assert collecting["stability"]["samples_1h"] >= 1
+        assert collecting["stability"]["success_rate_1h_pct"] == 100.0
         assert collecting["stability"]["errors_7d"] == 0
 
         bot.created_at = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
@@ -293,5 +295,51 @@ def test_testnet_history_and_live_readiness_are_reported():
         assert ready["live_readiness"]["next_actions"] == []
         assert ready["live_readiness"]["pilot_plan"]["budget_quote"] == 10.0
         assert ready["live_readiness"]["pilot_plan"]["manual_activation_required"] is True
+
+    asyncio.run(scenario())
+
+
+def test_testnet_repeated_sync_failures_pause_and_require_safe_manual_resume():
+    class FlakyClient(FakeTestnetClient):
+        def __init__(self):
+            super().__init__()
+            self.price_failures = 3
+
+        async def price(self, symbol):
+            if self.price_failures:
+                self.price_failures -= 1
+                raise BinanceTestnetError("temporary timeout")
+            return 100.0
+
+    async def scenario():
+        client = FlakyClient()
+        engine = GridEngine(client)
+        events = []
+
+        async def sink(event, bot, payload):
+            events.append(event)
+
+        engine.event_sink = sink
+        bot = await engine.start("BTCUSDT", 100, 1, 2, 100)
+        events.clear()
+        for _ in range(3):
+            await engine.sync()
+
+        assert bot.status == "BUY_PAUSED"
+        assert bot.buy_enabled is False
+        assert bot.sync_state == "DEGRADED"
+        assert bot.sync_failure_streak == 3
+        assert events.count("SYNC_DEGRADED") == 1
+
+        await engine.sync()
+        assert bot.sync_state == "HEALTHY"
+        assert bot.sync_failure_streak == 0
+        assert bot.buy_enabled is False
+        assert events.count("SYNC_RECOVERED") == 1
+
+        resumed = await engine.resume_buys()
+        assert resumed.status == "RUNNING"
+        assert resumed.buy_enabled is True
+        assert events.count("BUY_MANUAL_RESUMED") == 1
 
     asyncio.run(scenario())

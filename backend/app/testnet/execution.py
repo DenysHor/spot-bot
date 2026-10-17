@@ -43,6 +43,9 @@ class TestnetBot:
     orders: list[TestnetOrder] = field(default_factory=list)
     pnl_history: list[dict] = field(default_factory=list)
     sync_history: list[dict] = field(default_factory=list)
+    sync_failure_streak: int = 0
+    sync_state: str = "HEALTHY"
+    sync_recovered_at: str = ""
 
     def snapshot(self) -> dict:
         data = asdict(self)
@@ -147,7 +150,8 @@ class TestnetGridEngine:
     def _stability_summary(self) -> dict:
         bot = self.bot
         if not bot:
-            return {"samples_24h": 0, "samples_7d": 0, "success_rate_24h_pct": None,
+            return {"samples_1h": 0, "success_rate_1h_pct": None,
+                    "samples_24h": 0, "samples_7d": 0, "success_rate_24h_pct": None,
                     "success_rate_7d_pct": None, "timeouts_7d": 0, "errors_7d": 0,
                     "average_latency_ms": None, "p95_latency_ms": None, "error_free_days": 0.0}
         now = datetime.now(timezone.utc)
@@ -156,6 +160,7 @@ class TestnetGridEngine:
             for row in bot.sync_history if row.get("timestamp")
         ]
         rows_24h = [row for stamp, row in parsed if now - stamp <= timedelta(hours=24)]
+        rows_1h = [row for stamp, row in parsed if now - stamp <= timedelta(hours=1)]
         rows_7d = [row for stamp, row in parsed if now - stamp <= timedelta(days=7)]
         successes = [row for row in rows_7d if row.get("success")]
         latencies = sorted(float(row.get("latency_ms", 0)) for row in successes)
@@ -165,7 +170,8 @@ class TestnetGridEngine:
         pct = lambda rows: (sum(bool(row.get("success")) for row in rows) / len(rows) * 100) if rows else None
         p95_index = max(0, min(len(latencies) - 1, int(len(latencies) * 0.95))) if latencies else 0
         return {
-            "samples_24h": len(rows_24h), "samples_7d": len(rows_7d),
+            "samples_1h": len(rows_1h), "samples_24h": len(rows_24h), "samples_7d": len(rows_7d),
+            "success_rate_1h_pct": pct(rows_1h),
             "success_rate_24h_pct": pct(rows_24h), "success_rate_7d_pct": pct(rows_7d),
             "timeouts_7d": sum("timeout" in row.get("error", "").lower() or "не відповів" in row.get("error", "").lower() for row in failures),
             "errors_7d": len(failures),
@@ -502,7 +508,13 @@ class TestnetGridEngine:
                 })
             if bot.soft_complete and not any(x.side == "SELL" and x.status in {"NEW", "PARTIALLY_FILLED"} for x in bot.orders):
                 bot.status = "STOPPED"
+            recovered = bot.sync_failure_streak >= 3
             bot.last_sync_at, bot.last_error = self.now(), ""
+            bot.sync_failure_streak = 0
+            bot.sync_state = "HEALTHY"
+            if recovered:
+                bot.sync_recovered_at = bot.last_sync_at
+                await self._emit("SYNC_RECOVERED", bot)
             self._record_pnl(bot)
             sync_success = True
         except Exception as exc:
@@ -510,13 +522,18 @@ class TestnetGridEngine:
             sync_error = message
             changed = message != bot.last_error
             bot.last_error = message
+            bot.sync_failure_streak += 1
+            if bot.sync_failure_streak >= 3:
+                bot.sync_state = "DEGRADED"
+                if bot.buy_enabled:
+                    bot.buy_enabled = False
+                    bot.status = "BUY_PAUSED"
+                    await self._emit("SYNC_DEGRADED", bot)
             if "insufficient balance" in message.lower():
                 bot.buy_enabled = False
                 bot.status = "BUY_PAUSED"
                 if changed:
                     await self._emit("BUY_AUTO_PAUSED", bot)
-            elif changed:
-                await self._emit("SYNC_ERROR", bot)
         self._record_sync_health(bot, sync_success, (time.monotonic() - started) * 1000, sync_error)
         self._save()
         return bot
@@ -529,6 +546,28 @@ class TestnetGridEngine:
         async with self._sync_lock:
             await self._sync_once()
             return await self._reconciliation_snapshot()
+
+    async def audit(self) -> dict:
+        """Read-only exchange audit that does not wait for or duplicate the full order sync."""
+        return await self._reconciliation_snapshot()
+
+    async def resume_buys(self) -> TestnetBot:
+        """Resume replacement buys only after a fresh successful sync and safe audit."""
+        if not self.bot:
+            raise ValueError("TESTNET-бота немає")
+        async with self._sync_lock:
+            await self._sync_once()
+            if self.bot.sync_state != "HEALTHY" or self.bot.last_error:
+                raise ValueError("Синхронізація Binance ще не відновлена")
+            audit = await self._reconciliation_snapshot()
+            if audit["status"] != "SAFE":
+                raise ValueError("Покупки не відновлено: перевірка безпеки має зауваження")
+            self.bot.buy_enabled = True
+            self.bot.soft_complete = False
+            self.bot.status = "RUNNING"
+            await self._emit("BUY_MANUAL_RESUMED", self.bot)
+            self._save()
+            return self.bot
 
     async def stop_buys(self, soft_complete: bool = False) -> TestnetBot:
         if not self.bot:
