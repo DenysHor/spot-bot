@@ -169,3 +169,21 @@ def test_grid_health_prefers_error_signal_over_idle():
     )
 
     assert main.grid_bot_health(bot, now)["code"] == "ERROR"
+
+
+def test_grid_health_does_not_alert_for_empty_manually_paused_bot():
+    now = datetime(2026, 1, 10, 12, tzinfo=timezone.utc)
+    bot = SimpleNamespace(
+        created_at=(now - timedelta(days=10)).isoformat(), events=[], status="RUNNING",
+        consecutive_errors=0, recenter_count_today=0, max_recenters_per_day=3,
+        paused_reason="", manual_buy_paused=True,
+        snapshot=lambda: {
+            "manual_buy_paused": True, "grid_open_exposure_quote": 0.0,
+            "seed_value_quote": 0.0, "open_sell_orders": 0,
+        },
+    )
+
+    health = main.grid_bot_health(bot, now)
+
+    assert health["code"] == "INACTIVE_EMPTY"
+    assert health["needs_attention"] is False

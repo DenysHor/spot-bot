@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spot Grid Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.62.0">
-  <link rel="stylesheet" href="/static/advisor.css?v=0.62.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.64.0">
+  <link rel="stylesheet" href="/static/advisor.css?v=0.64.0">
 </head>
 <body>
   <div id="login-screen" class="login-screen hidden">
@@ -115,6 +115,12 @@
           <button id="analyze-grid" class="ghost" type="button">Перевірити пару та бюджет</button>
           <div id="grid-preflight" class="grid-preflight"><p>Перед запуском перевіримо ринок і портфельні ліміти.</p></div>
           <button type="submit">Запустити PAPER-бота</button>
+          <div class="split schedule-fields">
+            <label>Перевірити через, год<input id="schedule-delay" type="number" value="12" min="0.1" max="168" step="0.5"></label>
+            <label>Вікно запуску, год<input id="schedule-window" type="number" value="12" min="1" max="168" step="1"></label>
+          </div>
+          <button id="schedule-grid" class="ghost" type="button">Запланувати безпечний PAPER-запуск</button>
+          <div id="grid-schedules" class="grid-preflight"><p>Активних планів запуску немає.</p></div>
           <p class="form-note">Угоди симулюються. Реальні кошти не використовуються.</p>
         </form>
       </article>
@@ -227,6 +233,6 @@
   </main>
   <nav class="mobile-bottom-nav" aria-label="Мобільна навігація"><button type="button" onclick="openOverview()"><span>⌂</span>Огляд</button><button type="button" onclick="focusBotPicker()"><span>▣</span>Боти</button><button type="button" onclick="openAdvisor()"><span>◫</span>Аналітика</button><button type="button" onclick="openScanner()"><span>⌕</span>Сканер</button></nav>
   <div id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.62.0"></script>
+  <script src="/static/app.js?v=0.64.0"></script>
 </body>
 </html>

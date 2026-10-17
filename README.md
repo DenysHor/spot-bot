@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.63.0**. Telegram supports confirmed PAPER recommendation plans and guarded Binance Testnet synchronization/recovery. LIVE execution remains disabled.
+> Current development version: **0.64.0**. Native PAPER launch scheduling persists across restarts, rechecks market conditions, and reports outcomes through Telegram. LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.

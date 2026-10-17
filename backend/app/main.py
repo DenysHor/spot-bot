@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -321,6 +323,7 @@ async def grid_preflight_analysis(request) -> dict:
         "budget": budget,
         "market": {
             "price": market_price,
+            "rsi14": market_analysis["rsi14"],
             "change_24h_pct": change_24h,
             "quote_volume_24h": quote_volume,
             "average_hourly_range_pct": round(average_range, 3),
@@ -423,6 +426,97 @@ async def notify_testnet_event(event: str, bot, order) -> None:
 testnet_engine.event_sink = notify_testnet_event
 market_scanner_task: asyncio.Task | None = None
 market_guard_last_run = datetime.min.replace(tzinfo=timezone.utc)
+SCHEDULED_GRID_STORE_KEY = "scheduled_grid_launches_v1"
+
+
+def _load_scheduled_grid_launches() -> list[dict]:
+    raw = store.get_notification_state(SCHEDULED_GRID_STORE_KEY, "[]")
+    try:
+        rows = json.loads(raw)
+        return rows if isinstance(rows, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+scheduled_grid_launches: list[dict] = _load_scheduled_grid_launches()
+
+
+def _save_scheduled_grid_launches() -> None:
+    store.set_notification_state(
+        SCHEDULED_GRID_STORE_KEY,
+        json.dumps(scheduled_grid_launches, ensure_ascii=False),
+    )
+
+
+async def scheduled_grid_launch_once(now: datetime | None = None) -> None:
+    current = now or datetime.now(timezone.utc)
+    changed = False
+    for item in scheduled_grid_launches:
+        if item.get("status") != "PENDING":
+            continue
+        starts_at = datetime.fromisoformat(item["starts_at"])
+        expires_at = datetime.fromisoformat(item["expires_at"])
+        if current < starts_at:
+            continue
+        if current > expires_at:
+            previous_reason = item.get("last_reason") or "умови не виконані"
+            item.update(status="EXPIRED", last_checked_at=current.isoformat(), last_reason="Вікно запуску завершилося")
+            changed = True
+            if notifier.enabled:
+                await notifier.send(
+                    "SCHEDULED_GRID_EXPIRED",
+                    f"⏱ {item['symbol']} · PAPER-запуск не виконано\n"
+                    f"Вікно завершилося. Остання причина: {previous_reason}.",
+                )
+            continue
+        item["attempts"] = int(item.get("attempts", 0)) + 1
+        item["last_checked_at"] = current.isoformat()
+        changed = True
+        if any(
+            bot.symbol == item["symbol"] and bot.status != "STOPPED"
+            for bot in grid_engine.bots.values()
+        ):
+            item["status"] = "CANCELLED"
+            item["last_reason"] = "Для пари вже існує активний PAPER Grid-бот"
+            continue
+        request = GridStartRequest(**item["request"])
+        try:
+            preflight = await grid_preflight_analysis(request)
+            price = preflight["market"]["price"]
+            rsi = preflight["market"]["rsi14"]
+            regime = preflight["strategy"]["regime"]["name"]
+            change_24h = preflight["market"]["change_24h_pct"]
+            conditions = item["conditions"]
+            reasons = []
+            if not preflight["strategy"]["launch_allowed"]:
+                reasons.append(preflight["recommendation"])
+            if regime not in conditions["allowed_regimes"]:
+                reasons.append(f"режим {regime}")
+            if not conditions["min_rsi14"] <= rsi <= conditions["max_rsi14"]:
+                reasons.append(f"RSI {rsi:.1f} поза межами {conditions['min_rsi14']:.0f}–{conditions['max_rsi14']:.0f}")
+            if abs(change_24h) > conditions["max_abs_change_24h_pct"]:
+                reasons.append(f"рух за 24г {change_24h:+.2f}% надто сильний")
+            if request.price_floor is not None and not request.price_floor <= price <= request.price_ceiling:
+                reasons.append(f"ціна {price:.6f} поза коридором")
+            if reasons:
+                item["last_reason"] = "; ".join(reasons)
+                continue
+            bot = await start_paper_grid_bot(request, preflight=preflight)
+            item.update(
+                status="STARTED", bot_id=bot.id, launched_at=current.isoformat(),
+                last_reason="Усі умови та preflight виконані",
+            )
+            if notifier.enabled:
+                await notifier.send(
+                    "SCHEDULED_GRID_STARTED",
+                    f"✅ {bot.symbol} · PAPER Grid запущено за планом\n"
+                    f"Бюджет: {bot.budget_quote:.2f} USDT · крок {bot.step_pct:.2f}% · "
+                    f"рівнів {bot.levels_each_side}.\nРеальні кошти не використовуються.",
+                )
+        except Exception as exc:
+            item["last_reason"] = describe_exception(exc)
+    if changed:
+        _save_scheduled_grid_launches()
 
 
 def market_guard_assessment(bot, analysis: dict) -> dict:
@@ -491,6 +585,7 @@ async def market_scanner_forever() -> None:
             if now - market_guard_last_run >= timedelta(minutes=15):
                 await market_guard_once()
                 market_guard_last_run = now
+            await scheduled_grid_launch_once(now)
         except Exception as exc:
             logger.warning("Background market scanner failed: %s", describe_exception(exc))
         await asyncio.sleep(60)
@@ -524,7 +619,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.63.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.64.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -569,6 +664,15 @@ class GridStartRequest(GridPlanRequest):
     )
     price_floor: float | None = Field(default=None, gt=0)
     price_ceiling: float | None = Field(default=None, gt=0)
+
+
+class ScheduledGridLaunchRequest(GridStartRequest):
+    start_after_hours: float = Field(default=12.0, ge=0.1, le=168)
+    launch_window_hours: float = Field(default=12.0, ge=1, le=168)
+    min_rsi14: float = Field(default=40.0, ge=0, le=100)
+    max_rsi14: float = Field(default=65.0, ge=0, le=100)
+    max_abs_change_24h_pct: float = Field(default=8.0, gt=0, le=50)
+    allowed_regimes: list[str] = Field(default_factory=lambda: ["RANGE", "UPTREND"])
 
 
 class GridTrailingRequest(BaseModel):
@@ -669,7 +773,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.63.0",
+        "version": "0.64.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1286,8 +1390,8 @@ async def grid_bot(bot_id: str) -> dict:
 
 @app.post("/api/grid/preflight")
 async def grid_preflight(request: GridStartRequest) -> dict:
-    if settings.trading_mode != "PAPER":
-        raise HTTPException(status_code=409, detail="Grid preflight is available for PAPER mode only")
+    if settings.trading_mode not in {"PAPER", "TESTNET"}:
+        raise HTTPException(status_code=409, detail="Grid preflight is available for the PAPER circuit only")
     try:
         return await grid_preflight_analysis(request)
     except ValueError as exc:
@@ -1296,46 +1400,104 @@ async def grid_preflight(request: GridStartRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"Grid preflight failed: {exc}") from exc
 
 
+async def start_paper_grid_bot(request: GridStartRequest, preflight: dict | None = None):
+    symbol = await ensure_active_quote_symbol(request.symbol)
+    budget_status = automation_budget_status(symbol, request.budget_quote)
+    if not budget_status["allowed"]:
+        raise ValueError("; ".join(budget_status["reasons"]))
+    checked = preflight or await grid_preflight_analysis(request)
+    if not checked["strategy"]["launch_allowed"]:
+        raise ValueError(checked["recommendation"])
+    profile = checked["strategy"]["resolved_profile"]
+    seed_position_pct = {
+        "UPTREND_HYBRID_10": 10.0,
+        "UPTREND_HYBRID_20": 20.0,
+        "UPTREND_HYBRID_30": 30.0,
+    }.get(profile, 0.0)
+    return grid_engine.start_bot(
+        symbol=symbol,
+        base_asset=base_asset_from_symbol(symbol),
+        reference_price=await current_price(symbol),
+        budget_quote=request.budget_quote,
+        step_pct=request.step_pct,
+        levels_each_side=request.levels_each_side,
+        trailing_up_enabled=request.trailing_up_enabled or profile != "RANGE_GRID",
+        strategy_profile=profile,
+        seed_position_pct=seed_position_pct,
+        price_floor=checked["parameters"]["price_floor"],
+        price_ceiling=checked["parameters"]["price_ceiling"],
+    )
+
+
 @app.post("/api/grid/bots/start")
 async def grid_start(request: GridStartRequest) -> dict:
-    if settings.trading_mode != "PAPER":
-        raise HTTPException(status_code=409, detail="Grid execution v0.3 is PAPER-only")
+    if settings.trading_mode not in {"PAPER", "TESTNET"}:
+        raise HTTPException(status_code=409, detail="Grid execution is PAPER-only")
     try:
-        symbol = await ensure_active_quote_symbol(request.symbol)
-        budget_status = automation_budget_status(symbol, request.budget_quote)
-        if not budget_status["allowed"]:
-            raise ValueError("; ".join(budget_status["reasons"]))
-        preflight = await grid_preflight_analysis(request)
-        if not preflight["strategy"]["launch_allowed"]:
-            raise ValueError(preflight["recommendation"])
-        profile = preflight["strategy"]["resolved_profile"]
-        price_floor = preflight["parameters"]["price_floor"]
-        price_ceiling = preflight["parameters"]["price_ceiling"]
-        seed_position_pct = {
-            "UPTREND_HYBRID_10": 10.0,
-            "UPTREND_HYBRID_20": 20.0,
-            "UPTREND_HYBRID_30": 30.0,
-        }.get(profile, 0.0)
-        base_asset = base_asset_from_symbol(symbol)
-        price = await current_price(symbol)
-        bot = grid_engine.start_bot(
-            symbol=symbol,
-            base_asset=base_asset,
-            reference_price=price,
-            budget_quote=request.budget_quote,
-            step_pct=request.step_pct,
-            levels_each_side=request.levels_each_side,
-            trailing_up_enabled=profile != "RANGE_GRID",
-            strategy_profile=profile,
-            seed_position_pct=seed_position_pct,
-            price_floor=price_floor,
-            price_ceiling=price_ceiling,
-        )
-        return bot.snapshot()
+        return (await start_paper_grid_bot(request)).snapshot()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Grid start failed: {exc}") from exc
+
+
+@app.get("/api/grid/schedules")
+async def grid_schedules() -> dict:
+    return {"schedules": scheduled_grid_launches, "paper_only": True}
+
+
+@app.post("/api/grid/schedules")
+async def grid_schedule(request: ScheduledGridLaunchRequest) -> dict:
+    if settings.trading_mode not in {"PAPER", "TESTNET"}:
+        raise HTTPException(status_code=409, detail="Scheduled Grid is PAPER-only")
+    if request.min_rsi14 > request.max_rsi14:
+        raise HTTPException(status_code=400, detail="Мінімальний RSI не може перевищувати максимальний")
+    allowed_regimes = sorted(set(request.allowed_regimes))
+    if not allowed_regimes or not set(allowed_regimes) <= {"RANGE", "UPTREND", "UNCERTAIN"}:
+        raise HTTPException(status_code=400, detail="Некоректні дозволені режими ринку")
+    now = datetime.now(timezone.utc)
+    starts_at = now + timedelta(hours=request.start_after_hours)
+    expires_at = starts_at + timedelta(hours=request.launch_window_hours)
+    launch_request = request.model_dump(exclude={
+        "start_after_hours", "launch_window_hours", "min_rsi14", "max_rsi14",
+        "max_abs_change_24h_pct", "allowed_regimes",
+    })
+    launch_request["symbol"] = launch_request["symbol"].upper().strip()
+    duplicate = next((
+        row for row in scheduled_grid_launches
+        if row.get("status") == "PENDING" and row.get("symbol") == launch_request["symbol"]
+    ), None)
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Для {launch_request['symbol']} вже є активний план запуску {duplicate['id']}",
+        )
+    item = {
+        "id": secrets.token_hex(6), "symbol": launch_request["symbol"], "status": "PENDING",
+        "created_at": now.isoformat(), "starts_at": starts_at.isoformat(), "expires_at": expires_at.isoformat(),
+        "last_checked_at": "", "last_reason": "Очікує початку вікна", "attempts": 0,
+        "request": launch_request,
+        "conditions": {
+            "min_rsi14": request.min_rsi14, "max_rsi14": request.max_rsi14,
+            "max_abs_change_24h_pct": request.max_abs_change_24h_pct,
+            "allowed_regimes": allowed_regimes,
+        },
+    }
+    scheduled_grid_launches.append(item)
+    _save_scheduled_grid_launches()
+    return item
+
+
+@app.delete("/api/grid/schedules/{schedule_id}")
+async def grid_schedule_cancel(schedule_id: str) -> dict:
+    item = next((row for row in scheduled_grid_launches if row["id"] == schedule_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="План запуску не знайдено")
+    if item["status"] != "PENDING":
+        raise HTTPException(status_code=409, detail="Цей план уже не очікує запуску")
+    item.update(status="CANCELLED", last_reason="Скасовано користувачем")
+    _save_scheduled_grid_launches()
+    return item
 
 
 @app.post("/api/grid/bots/{bot_id}/trailing-up")
@@ -1421,12 +1583,21 @@ def grid_bot_health(bot, now: datetime | None = None) -> dict:
     ]
     last_activity = max(fill_times, default=created)
     idle_hours = max(0.0, (current - last_activity).total_seconds() / 3600)
+    snapshot = bot.snapshot() if callable(getattr(bot, "snapshot", None)) else {}
+    manually_idle_and_empty = (
+        bool(snapshot.get("manual_buy_paused", getattr(bot, "manual_buy_paused", False)))
+        and float(snapshot.get("grid_open_exposure_quote", 0.0)) <= 1e-9
+        and float(snapshot.get("seed_value_quote", 0.0)) <= 1e-9
+        and int(snapshot.get("open_sell_orders", 0)) == 0
+    )
     if bot.status == "PAUSED":
         code, label, message = "PAUSED", "Потребує уваги", bot.paused_reason or "Бот призупинений"
     elif bot.consecutive_errors:
         code, label, message = "ERROR", "Помилка", f"Помилок поспіль: {bot.consecutive_errors}"
     elif bot.recenter_count_today >= bot.max_recenters_per_day:
         code, label, message = "TRAILING_LIMIT", "Потребує уваги", "Досягнуто добовий ліміт Trailing"
+    elif manually_idle_and_empty:
+        code, label, message = "INACTIVE_EMPTY", "Очікує рішення", "Покупки вимкнені, відкритих позицій немає"
     elif idle_hours >= 48:
         code, label, message = "IDLE", "Немає угод", f"Без виконаних ордерів {idle_hours:.0f} год"
     else:
@@ -1434,7 +1605,7 @@ def grid_bot_health(bot, now: datetime | None = None) -> dict:
     return {
         "code": code, "label": label, "message": message,
         "idle_hours": round(idle_hours, 1), "last_fill_at": max(fill_times).isoformat() if fill_times else None,
-        "needs_attention": code != "NORMAL",
+        "needs_attention": code not in {"NORMAL", "INACTIVE_EMPTY"},
     }
 
 
@@ -1720,6 +1891,8 @@ async def telegram_command(text: str) -> str:
             "/resume_buys ПАРА — перевірити ринок і дозволити покупки",
             "/sync_testnet — синхронізувати і перевірити Binance Testnet",
             "/repair_testnet — безпечний план відновлення після reset",
+            "/schedules — заплановані PAPER-запуски",
+            "/cancel_schedule ID — скасувати очікуваний запуск",
             "/confirm КОД — підтвердити показаний план (чинний 10 хв)",
             "/cancel — скасувати очікуване підтвердження",
             "Продаж зі збитком і LIVE-операції через Telegram недоступні.",
@@ -1728,6 +1901,25 @@ async def telegram_command(text: str) -> str:
         return notifier.daily_report()
     if command == "/recommendations":
         return await telegram_daily_advisor()
+    if command == "/schedules":
+        rows = [row for row in scheduled_grid_launches if row["status"] == "PENDING"]
+        if not rows:
+            return "Запланованих PAPER-запусків немає."
+        lines = ["🗓 Заплановані PAPER-запуски"]
+        for row in rows:
+            starts = datetime.fromisoformat(row["starts_at"]).astimezone(ZoneInfo("Europe/Kiev")).strftime("%d.%m %H:%M")
+            expires = datetime.fromisoformat(row["expires_at"]).astimezone(ZoneInfo("Europe/Kiev")).strftime("%d.%m %H:%M")
+            lines.append(f"• {row['symbol']} · {row['id']} · {starts}—{expires}\n  {row['last_reason']}")
+        return "\n".join(lines)
+    if command == "/cancel_schedule":
+        if len(parts) != 2:
+            return "Формат: /cancel_schedule ID"
+        row = next((item for item in scheduled_grid_launches if item["id"] == parts[1]), None)
+        if row is None or row["status"] != "PENDING":
+            return "Активний план із таким ID не знайдено."
+        row.update(status="CANCELLED", last_reason="Скасовано через Telegram")
+        _save_scheduled_grid_launches()
+        return f"✅ {row['symbol']}: запланований PAPER-запуск скасовано."
     if command == "/cancel":
         telegram_pending_actions.clear()
         return "✅ Очікувану дію скасовано."
