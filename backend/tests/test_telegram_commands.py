@@ -65,3 +65,28 @@ def test_testnet_audit_message_reports_issues():
     assert "CRITICAL" in message
     assert "локально 4 / Binance 0" in message
     assert "4 заявки відсутні" in message
+
+
+def test_schedules_command_shows_pending_and_recent_outcome(monkeypatch):
+    rows = [
+        {
+            "id": "pending-1", "symbol": "PUMPUSDT", "status": "PENDING",
+            "starts_at": "2026-10-17T16:00:00+00:00",
+            "expires_at": "2026-10-18T04:00:00+00:00",
+            "last_reason": "Очікує початку вікна",
+        },
+        {
+            "id": "cancelled-1", "symbol": "BTCUSDT", "status": "CANCELLED",
+            "starts_at": "2026-10-17T16:00:00+00:00",
+            "expires_at": "2026-10-18T04:00:00+00:00",
+            "last_reason": "Для пари вже працює Grid-бот",
+        },
+    ]
+    monkeypatch.setattr(main, "scheduled_grid_launches", rows)
+
+    response = asyncio.run(main.telegram_command("/schedules"))
+
+    assert "PUMPUSDT" in response
+    assert "Очікує початку вікна" in response
+    assert "BTCUSDT" in response
+    assert "скасовано" in response

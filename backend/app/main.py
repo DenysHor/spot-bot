@@ -464,6 +464,12 @@ async def scheduled_grid_launch_once(now: datetime | None = None) -> None:
                 last_reason="Скасовано автоматично: для пари вже існує активний PAPER Grid-бот",
             )
             changed = True
+            if notifier.enabled:
+                await notifier.send(
+                    "SCHEDULED_GRID_CANCELLED",
+                    f"ℹ️ {item['symbol']} · відкладений PAPER-запуск скасовано\n"
+                    "Для цієї пари вже працює Grid-бот. Дублікат не створено.",
+                )
             continue
         starts_at = datetime.fromisoformat(item["starts_at"])
         expires_at = datetime.fromisoformat(item["expires_at"])
@@ -623,7 +629,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.65.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.66.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -777,7 +783,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.65.0",
+        "version": "0.66.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1914,14 +1920,20 @@ async def telegram_command(text: str) -> str:
     if command == "/recommendations":
         return await telegram_daily_advisor()
     if command == "/schedules":
-        rows = [row for row in scheduled_grid_launches if row["status"] == "PENDING"]
-        if not rows:
-            return "Запланованих PAPER-запусків немає."
-        lines = ["🗓 Заплановані PAPER-запуски"]
-        for row in rows:
+        pending = [row for row in scheduled_grid_launches if row["status"] == "PENDING"]
+        recent = [row for row in reversed(scheduled_grid_launches) if row["status"] != "PENDING"][:3]
+        if not pending and not recent:
+            return "Планів PAPER-запуску ще немає."
+        lines = ["🗓 PAPER-плани запуску"]
+        for row in pending:
             starts = datetime.fromisoformat(row["starts_at"]).astimezone(ZoneInfo("Europe/Kiev")).strftime("%d.%m %H:%M")
             expires = datetime.fromisoformat(row["expires_at"]).astimezone(ZoneInfo("Europe/Kiev")).strftime("%d.%m %H:%M")
-            lines.append(f"• {row['symbol']} · {row['id']} · {starts}—{expires}\n  {row['last_reason']}")
+            lines.append(f"• ⏳ {row['symbol']} · {row['id']} · {starts}—{expires}\n  {row['last_reason']}")
+        if recent:
+            labels = {"STARTED": "✅ запущено", "CANCELLED": "↩️ скасовано", "EXPIRED": "⌛ вікно минуло"}
+            lines.append("Останні завершені:")
+            for row in recent:
+                lines.append(f"• {row['symbol']} · {labels.get(row['status'], row['status'])}\n  {row['last_reason']}")
         return "\n".join(lines)
     if command == "/cancel_schedule":
         if len(parts) != 2:
