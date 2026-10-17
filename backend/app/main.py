@@ -454,6 +454,17 @@ async def scheduled_grid_launch_once(now: datetime | None = None) -> None:
     for item in scheduled_grid_launches:
         if item.get("status") != "PENDING":
             continue
+        if any(
+            bot.symbol == item["symbol"] and bot.status != "STOPPED"
+            for bot in grid_engine.bots.values()
+        ):
+            item.update(
+                status="CANCELLED",
+                last_checked_at=current.isoformat(),
+                last_reason="Скасовано автоматично: для пари вже існує активний PAPER Grid-бот",
+            )
+            changed = True
+            continue
         starts_at = datetime.fromisoformat(item["starts_at"])
         expires_at = datetime.fromisoformat(item["expires_at"])
         if current < starts_at:
@@ -472,13 +483,6 @@ async def scheduled_grid_launch_once(now: datetime | None = None) -> None:
         item["attempts"] = int(item.get("attempts", 0)) + 1
         item["last_checked_at"] = current.isoformat()
         changed = True
-        if any(
-            bot.symbol == item["symbol"] and bot.status != "STOPPED"
-            for bot in grid_engine.bots.values()
-        ):
-            item["status"] = "CANCELLED"
-            item["last_reason"] = "Для пари вже існує активний PAPER Grid-бот"
-            continue
         request = GridStartRequest(**item["request"])
         try:
             preflight = await grid_preflight_analysis(request)
@@ -619,7 +623,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.64.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.65.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -773,7 +777,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.64.0",
+        "version": "0.65.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1463,6 +1467,14 @@ async def grid_schedule(request: ScheduledGridLaunchRequest) -> dict:
         "max_abs_change_24h_pct", "allowed_regimes",
     })
     launch_request["symbol"] = launch_request["symbol"].upper().strip()
+    if any(
+        bot.symbol == launch_request["symbol"] and bot.status != "STOPPED"
+        for bot in grid_engine.bots.values()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Для {launch_request['symbol']} вже працює PAPER Grid-бот; дубль не заплановано",
+        )
     duplicate = next((
         row for row in scheduled_grid_launches
         if row.get("status") == "PENDING" and row.get("symbol") == launch_request["symbol"]

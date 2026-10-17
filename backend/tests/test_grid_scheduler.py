@@ -81,3 +81,18 @@ def test_scheduler_waits_when_rsi_is_overheated(monkeypatch):
 
     assert item["status"] == "PENDING"
     assert "RSI 72.0" in item["last_reason"]
+
+
+def test_scheduler_cancels_duplicate_before_launch_window(monkeypatch):
+    now = datetime(2026, 10, 17, 6, tzinfo=timezone.utc)
+    item = scheduled_item(now + timedelta(hours=12))
+    active = SimpleNamespace(symbol="PUMPUSDT", status="RUNNING")
+
+    monkeypatch.setattr(main, "scheduled_grid_launches", [item])
+    monkeypatch.setattr(main.grid_engine, "bots", {"bot-1": active})
+    monkeypatch.setattr(main, "_save_scheduled_grid_launches", lambda: None)
+
+    asyncio.run(main.scheduled_grid_launch_once(now))
+
+    assert item["status"] == "CANCELLED"
+    assert "вже існує активний" in item["last_reason"]
