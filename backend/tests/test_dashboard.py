@@ -1,8 +1,34 @@
+import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from app import main
+
+
+def test_testnet_reconciliation_timeout_returns_cached_audit(monkeypatch):
+    cached = {
+        "status": "SAFE", "symbol": "XRPUSDT", "checked_at": "2026-10-17T06:00:00+00:00",
+        "tracked_open_orders": 8, "exchange_open_orders": 8, "used_budget": 99.5,
+        "issues": [], "live_readiness": {"status": "COLLECTING_DATA"},
+    }
+
+    async def slow_reconciliation():
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(main.settings, "trading_mode", "TESTNET")
+    monkeypatch.setattr(main.testnet_engine, "bot", SimpleNamespace(symbol="XRPUSDT"))
+    monkeypatch.setattr(main.testnet_engine, "reconciliation", slow_reconciliation)
+    monkeypatch.setattr(main, "testnet_audit_cache", cached)
+    monkeypatch.setattr(main, "TESTNET_AUDIT_TIMEOUT_SECONDS", 0.001)
+
+    result = asyncio.run(main.testnet_reconciliation())
+
+    assert result["status"] == "WARNING"
+    assert result["cached"] is True
+    assert result["live_readiness"] == cached["live_readiness"]
+    assert "останній успішний аудит" in result["issues"][-1]["message"]
 
 
 def test_dashboard_and_static_assets_are_served():
@@ -15,9 +41,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.67.0" in page.text
-    assert "/static/advisor.css?v=0.67.0" in page.text
-    assert "/static/app.js?v=0.67.0" in page.text
+    assert "/static/styles.css?v=0.68.0" in page.text
+    assert "/static/advisor.css?v=0.68.0" in page.text
+    assert "/static/app.js?v=0.68.0" in page.text
     assert "TESTNET-бот уже працює" in script.text
     assert "Ціна Testnet" in script.text
     assert "Найближча купівля" in script.text
@@ -117,6 +143,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Готовність до LIVE" in script.text
     assert "Що залишилося" in script.text
     assert "LIVE-виконання в цій версії недоступне" in script.text
+    assert "КЕШ · очікуємо свіжу відповідь Binance" in script.text
     assert "testnet-pnl-chart" in script.text
     assert "state.testnetAudit=null" in script.text
     assert "Аварійна зупинка" in script.text

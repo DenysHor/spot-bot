@@ -6,7 +6,7 @@ Binance Spot trading manager with three execution modes:
 - `TESTNET` — Binance Spot Testnet
 - `LIVE` — real Binance Spot trading
 
-> Current development version: **0.67.0**. The TESTNET readiness panel now explains every remaining gate and previews a capped, manual small-pilot plan. LIVE execution remains disabled.
+> Current development version: **0.68.0**. TESTNET reconciliation now times out safely and falls back to the last successful audit while keeping readiness conservative. LIVE execution remains disabled.
 
 To run the isolated Binance Spot Testnet pilot, keep Testnet-only API credentials in
 `BINANCE_API_KEY` and `BINANCE_API_SECRET`, set `TRADING_MODE=TESTNET`, and redeploy.

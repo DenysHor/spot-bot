@@ -39,6 +39,8 @@ from app.testnet.execution import TestnetGridEngine
 market = BinancePublicClient()
 testnet = BinanceTestnetClient(settings.binance_api_key, settings.binance_api_secret)
 testnet_health = {"verified": False, "last_checked_at": "", "last_error": ""}
+testnet_audit_cache: dict | None = None
+TESTNET_AUDIT_TIMEOUT_SECONDS = 8
 auth = SessionAuth(
     settings.dashboard_username, settings.dashboard_password,
     settings.session_secret, settings.secure_cookies,
@@ -629,7 +631,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.67.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.68.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -783,7 +785,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.67.0",
+        "version": "0.68.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -876,13 +878,41 @@ async def testnet_grid_sync() -> dict:
 
 @app.get("/api/testnet/reconciliation")
 async def testnet_reconciliation() -> dict:
+    global testnet_audit_cache
     require_testnet_mode()
     if not testnet_engine.bot:
         raise HTTPException(status_code=404, detail="TESTNET-бота немає")
     try:
-        return await testnet_engine.reconciliation()
-    except (ValueError, BinanceTestnetError) as exc:
-        raise HTTPException(status_code=502, detail=f"Перевірка TESTNET: {exc}") from exc
+        result = await asyncio.wait_for(
+            testnet_engine.reconciliation(), timeout=TESTNET_AUDIT_TIMEOUT_SECONDS,
+        )
+        result.update(cached=False, stale=False)
+        testnet_audit_cache = result
+        return result
+    except (TimeoutError, ValueError, BinanceTestnetError) as exc:
+        reason = (
+            f"Binance Testnet не відповів за {TESTNET_AUDIT_TIMEOUT_SECONDS} с"
+            if isinstance(exc, TimeoutError) else describe_exception(exc)
+        )
+        if testnet_audit_cache and testnet_audit_cache.get("symbol") == testnet_engine.bot.symbol:
+            fallback = dict(testnet_audit_cache)
+            fallback["issues"] = [
+                *testnet_audit_cache.get("issues", []),
+                {"severity": "WARNING", "message": f"Показано останній успішний аудит: {reason}"},
+            ]
+            fallback.update(status="WARNING", cached=True, stale=True, cache_reason=reason)
+            return fallback
+        return {
+            "status": "ERROR", "checked_at": datetime.now(timezone.utc).isoformat(),
+            "symbol": testnet_engine.bot.symbol, "tracked_open_orders": None,
+            "exchange_open_orders": None, "used_budget": None,
+            "issues": [
+                {"severity": "WARNING", "message": reason},
+                {"severity": "WARNING", "message": "Готовність оцінюється консервативно до свіжої відповіді Binance"},
+            ],
+            "cached": False, "stale": True, "cache_reason": reason,
+            "live_readiness": testnet_engine._live_readiness("ERROR"),
+        }
 
 
 @app.get("/api/testnet/recovery-preview")
