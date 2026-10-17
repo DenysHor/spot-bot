@@ -667,7 +667,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.72.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.72.1", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -822,7 +822,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.72.0",
+        "version": "0.72.1",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -1935,6 +1935,28 @@ def portfolio_risk_status() -> dict:
         **{bot.base_asset: bot.last_price for bot in active if bot.last_price > 0},
         **{bot.base_asset: bot.last_price for bot in active_dca if bot.last_price > 0},
     }
+    snapshot = portfolio.snapshot(prices)
+    today = datetime.now(timezone.utc).date()
+    daily_realized = sum(
+        trade.realized_pnl - trade.fee_quote
+        for trade in portfolio.trades
+        if datetime.fromisoformat(trade.timestamp.replace("Z", "+00:00")).date() == today
+    )
+    allocated = sum(position["market_value"] for position in snapshot["positions"])
+    result = risk_manager.status(
+        total_equity=snapshot["total_equity"], free_quote=snapshot["quote_balance"],
+        allocated_quote=allocated, daily_realized_pnl=daily_realized,
+        active_positions=len(snapshot["positions"]),
+    )
+    return {
+        **result,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "metrics": {
+            "total_equity": snapshot["total_equity"], "free_quote": snapshot["quote_balance"],
+            "allocated_quote": allocated, "daily_realized_pnl": daily_realized,
+            "active_positions": len(snapshot["positions"]),
+        },
+    }
 
 
 def telegram_risk_message() -> str:
@@ -1974,30 +1996,6 @@ def telegram_journal_message(limit: int = 10) -> str:
             outcome = f" · 24г {row['outcome_24h_status']} {row['outcome_24h_delta']:+.2f}"
         lines.append(f"• {when} · {subject} · {decision} · {labels.get(row['status'], row['status'])}{outcome}")
     return "\n".join(lines)
-    snapshot = portfolio.snapshot(prices)
-    today = datetime.now(timezone.utc).date()
-    daily_realized = sum(
-        trade.realized_pnl - trade.fee_quote
-        for trade in portfolio.trades
-        if datetime.fromisoformat(trade.timestamp.replace("Z", "+00:00")).date() == today
-    )
-    allocated = sum(
-        position["market_value"] for position in snapshot["positions"]
-    )
-    result = risk_manager.status(
-        total_equity=snapshot["total_equity"], free_quote=snapshot["quote_balance"],
-        allocated_quote=allocated, daily_realized_pnl=daily_realized,
-        active_positions=len(snapshot["positions"]),
-    )
-    return {
-        **result,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "metrics": {
-            "total_equity": snapshot["total_equity"], "free_quote": snapshot["quote_balance"],
-            "allocated_quote": allocated, "daily_realized_pnl": daily_realized,
-            "active_positions": len(snapshot["positions"]),
-        },
-    }
 
 
 @app.get("/api/risk/status")
