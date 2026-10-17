@@ -631,7 +631,7 @@ async def lifespan(app: FastAPI):
     await testnet_engine.stop_background()
 
 
-app = FastAPI(title="Spot Bot API", version="0.68.0", lifespan=lifespan)
+app = FastAPI(title="Spot Bot API", version="0.69.0", lifespan=lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -785,7 +785,7 @@ def base_asset_from_symbol(symbol: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "version": "0.68.0",
+        "version": "0.69.0",
         "trading_mode": settings.trading_mode,
         "live_trading_enabled": False,
         "grid_background_worker": settings.trading_mode in {"PAPER", "TESTNET"},
@@ -894,12 +894,19 @@ async def testnet_reconciliation() -> dict:
             f"Binance Testnet не відповів за {TESTNET_AUDIT_TIMEOUT_SECONDS} с"
             if isinstance(exc, TimeoutError) else describe_exception(exc)
         )
+        if isinstance(exc, TimeoutError):
+            testnet_engine._record_sync_health(
+                testnet_engine.bot, False, TESTNET_AUDIT_TIMEOUT_SECONDS * 1000, reason,
+            )
+            testnet_engine._save()
         if testnet_audit_cache and testnet_audit_cache.get("symbol") == testnet_engine.bot.symbol:
             fallback = dict(testnet_audit_cache)
             fallback["issues"] = [
                 *testnet_audit_cache.get("issues", []),
                 {"severity": "WARNING", "message": f"Показано останній успішний аудит: {reason}"},
             ]
+            fallback["stability"] = testnet_engine._stability_summary()
+            fallback["live_readiness"] = testnet_engine._live_readiness("ERROR")
             fallback.update(status="WARNING", cached=True, stale=True, cache_reason=reason)
             return fallback
         return {
@@ -912,6 +919,7 @@ async def testnet_reconciliation() -> dict:
             ],
             "cached": False, "stale": True, "cache_reason": reason,
             "live_readiness": testnet_engine._live_readiness("ERROR"),
+            "stability": testnet_engine._stability_summary(),
         }
 
 

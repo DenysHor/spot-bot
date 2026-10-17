@@ -1,7 +1,8 @@
 import asyncio
 import json
+import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.exchange.binance_testnet import BinanceTestnetClient, BinanceTestnetError
 
@@ -41,6 +42,7 @@ class TestnetBot:
     events: list[dict] = field(default_factory=list)
     orders: list[TestnetOrder] = field(default_factory=list)
     pnl_history: list[dict] = field(default_factory=list)
+    sync_history: list[dict] = field(default_factory=list)
 
     def snapshot(self) -> dict:
         data = asdict(self)
@@ -127,6 +129,52 @@ class TestnetGridEngine:
                 bot.pnl_history.append(point)
         bot.pnl_history = bot.pnl_history[-500:]
 
+    def _record_sync_health(self, bot: TestnetBot, success: bool, latency_ms: float, error: str = "") -> None:
+        point = {
+            "timestamp": self.now(), "success": success,
+            "latency_ms": round(latency_ms, 1), "error": error[:200],
+        }
+        if success and bot.sync_history and bot.sync_history[-1].get("success"):
+            previous = datetime.fromisoformat(bot.sync_history[-1]["timestamp"])
+            if (datetime.now(timezone.utc) - previous).total_seconds() < 300:
+                bot.sync_history[-1] = point
+            else:
+                bot.sync_history.append(point)
+        else:
+            bot.sync_history.append(point)
+        bot.sync_history = bot.sync_history[-2500:]
+
+    def _stability_summary(self) -> dict:
+        bot = self.bot
+        if not bot:
+            return {"samples_24h": 0, "samples_7d": 0, "success_rate_24h_pct": None,
+                    "success_rate_7d_pct": None, "timeouts_7d": 0, "errors_7d": 0,
+                    "average_latency_ms": None, "p95_latency_ms": None, "error_free_days": 0.0}
+        now = datetime.now(timezone.utc)
+        parsed = [
+            (datetime.fromisoformat(row["timestamp"]), row)
+            for row in bot.sync_history if row.get("timestamp")
+        ]
+        rows_24h = [row for stamp, row in parsed if now - stamp <= timedelta(hours=24)]
+        rows_7d = [row for stamp, row in parsed if now - stamp <= timedelta(days=7)]
+        successes = [row for row in rows_7d if row.get("success")]
+        latencies = sorted(float(row.get("latency_ms", 0)) for row in successes)
+        failures = [row for row in rows_7d if not row.get("success")]
+        failure_times = [stamp for stamp, row in parsed if not row.get("success")]
+        safe_since = max(failure_times, default=datetime.fromisoformat(bot.created_at))
+        pct = lambda rows: (sum(bool(row.get("success")) for row in rows) / len(rows) * 100) if rows else None
+        p95_index = max(0, min(len(latencies) - 1, int(len(latencies) * 0.95))) if latencies else 0
+        return {
+            "samples_24h": len(rows_24h), "samples_7d": len(rows_7d),
+            "success_rate_24h_pct": pct(rows_24h), "success_rate_7d_pct": pct(rows_7d),
+            "timeouts_7d": sum("timeout" in row.get("error", "").lower() or "не відповів" in row.get("error", "").lower() for row in failures),
+            "errors_7d": len(failures),
+            "average_latency_ms": sum(latencies) / len(latencies) if latencies else None,
+            "p95_latency_ms": latencies[p95_index] if latencies else None,
+            "error_free_days": max(0.0, (now - safe_since).total_seconds() / 86400),
+            "last_sample_at": parsed[-1][0].isoformat() if parsed else None,
+        }
+
     def _live_readiness(self, audit_status: str) -> dict:
         bot = self.bot
         snapshot = bot.snapshot()
@@ -136,6 +184,10 @@ class TestnetGridEngine:
             datetime.fromisoformat(row["timestamp"]) for row in bot.events
             if row.get("event") == "SYNC_ERROR" and row.get("timestamp")
         ]
+        error_times.extend(
+            datetime.fromisoformat(row["timestamp"]) for row in bot.sync_history
+            if not row.get("success") and row.get("timestamp")
+        )
         safe_since = max(error_times, default=datetime.fromisoformat(bot.created_at))
         safe_days = max(0.0, (now - safe_since).total_seconds() / 86400) if audit_status == "SAFE" else 0.0
         totals = [float(row.get("total_pnl", 0)) for row in bot.pnl_history] or [snapshot["total_pnl"]]
@@ -260,6 +312,7 @@ class TestnetGridEngine:
             "issues": issues, "virtual_funds": True,
         }
         result["live_readiness"] = self._live_readiness(status)
+        result["stability"] = self._stability_summary()
         return result
 
     async def _recovery_preview_locked(self) -> dict:
@@ -404,6 +457,9 @@ class TestnetGridEngine:
         bot = self.bot
         if not bot or bot.status == "STOPPED":
             return bot
+        started = time.monotonic()
+        sync_success = False
+        sync_error = ""
         try:
             rules = await self.client.symbol_rules(bot.symbol)
             bot.last_price = await self.client.price(bot.symbol)
@@ -448,8 +504,10 @@ class TestnetGridEngine:
                 bot.status = "STOPPED"
             bot.last_sync_at, bot.last_error = self.now(), ""
             self._record_pnl(bot)
+            sync_success = True
         except Exception as exc:
             message = str(exc)
+            sync_error = message
             changed = message != bot.last_error
             bot.last_error = message
             if "insufficient balance" in message.lower():
@@ -459,6 +517,7 @@ class TestnetGridEngine:
                     await self._emit("BUY_AUTO_PAUSED", bot)
             elif changed:
                 await self._emit("SYNC_ERROR", bot)
+        self._record_sync_health(bot, sync_success, (time.monotonic() - started) * 1000, sync_error)
         self._save()
         return bot
 

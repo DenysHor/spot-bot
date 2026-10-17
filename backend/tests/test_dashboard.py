@@ -20,6 +20,10 @@ def test_testnet_reconciliation_timeout_returns_cached_audit(monkeypatch):
     monkeypatch.setattr(main.settings, "trading_mode", "TESTNET")
     monkeypatch.setattr(main.testnet_engine, "bot", SimpleNamespace(symbol="XRPUSDT"))
     monkeypatch.setattr(main.testnet_engine, "reconciliation", slow_reconciliation)
+    monkeypatch.setattr(main.testnet_engine, "_record_sync_health", lambda *args: None)
+    monkeypatch.setattr(main.testnet_engine, "_save", lambda: None)
+    monkeypatch.setattr(main.testnet_engine, "_stability_summary", lambda: {"errors_7d": 1})
+    monkeypatch.setattr(main.testnet_engine, "_live_readiness", lambda status: cached["live_readiness"])
     monkeypatch.setattr(main, "testnet_audit_cache", cached)
     monkeypatch.setattr(main, "TESTNET_AUDIT_TIMEOUT_SECONDS", 0.001)
 
@@ -41,9 +45,9 @@ def test_dashboard_and_static_assets_are_served():
 
     assert page.status_code == 200
     assert "Spot Grid Lab" in page.text
-    assert "/static/styles.css?v=0.68.0" in page.text
-    assert "/static/advisor.css?v=0.68.0" in page.text
-    assert "/static/app.js?v=0.68.0" in page.text
+    assert "/static/styles.css?v=0.69.0" in page.text
+    assert "/static/advisor.css?v=0.69.0" in page.text
+    assert "/static/app.js?v=0.69.0" in page.text
     assert "TESTNET-бот уже працює" in script.text
     assert "Ціна Testnet" in script.text
     assert "Найближча купівля" in script.text
@@ -144,6 +148,7 @@ def test_dashboard_and_static_assets_are_served():
     assert "Що залишилося" in script.text
     assert "LIVE-виконання в цій версії недоступне" in script.text
     assert "КЕШ · очікуємо свіжу відповідь Binance" in script.text
+    assert "СТАБІЛЬНІСТЬ BINANCE" in script.text
     assert "testnet-pnl-chart" in script.text
     assert "state.testnetAudit=null" in script.text
     assert "Аварійна зупинка" in script.text

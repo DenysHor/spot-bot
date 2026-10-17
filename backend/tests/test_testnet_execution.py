@@ -279,6 +279,9 @@ def test_testnet_history_and_live_readiness_are_reported():
         assert collecting["live_readiness"]["ready_for_live"] is False
         assert collecting["live_readiness"]["next_actions"]
         assert collecting["live_readiness"]["pilot_plan"]["live_execution_available"] is False
+        assert collecting["stability"]["samples_24h"] >= 1
+        assert collecting["stability"]["success_rate_24h_pct"] == 100.0
+        assert collecting["stability"]["errors_7d"] == 0
 
         bot.created_at = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
         bot.completed_cycles = 50
